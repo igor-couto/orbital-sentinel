@@ -682,7 +682,7 @@ export function App() {
       >
         <div className="dialog-heading">
           <div>
-            <div className="eyebrow">A PERSONAL PROJECT</div>
+            <div className="eyebrow">PROJECT NOTES</div>
             <h2 id="about-title">About Orbital Sentinel</h2>
           </div>
           <button
@@ -696,7 +696,7 @@ export function App() {
         <div className="notes-body">
           <p>
             I’m Igor Couto, and I created Orbital Sentinel to learn and have fun
-            building something around my interest in space.
+            building something around my interest in space and maps.
           </p>
           <a
             href="https://github.com/igor-couto/orbital-sentinel"
