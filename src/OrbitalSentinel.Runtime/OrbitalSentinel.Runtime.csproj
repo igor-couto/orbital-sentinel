@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="../OrbitalSentinel.Infrastructure/OrbitalSentinel.Infrastructure.csproj" />
+    <ProjectReference Include="../OrbitalSentinel.Propagation/OrbitalSentinel.Propagation.csproj" />
+    <PackageReference Include="Confluent.Kafka" Version="2.16.0" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,14 @@
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+**/coverage/
+**/TestResults/
+.vs/
+.idea/
+.env
+.local/
+artifacts/
+*.user
+*.suo
+

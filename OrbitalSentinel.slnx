@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/OrbitalSentinel.Api/OrbitalSentinel.Api.csproj" />
+    <Project Path="src/OrbitalSentinel.Core/OrbitalSentinel.Core.csproj" />
+    <Project Path="src/OrbitalSentinel.Infrastructure/OrbitalSentinel.Infrastructure.csproj" />
+    <Project Path="src/OrbitalSentinel.Propagation/OrbitalSentinel.Propagation.csproj" />
+    <Project Path="src/OrbitalSentinel.Runtime/OrbitalSentinel.Runtime.csproj" />
+    <Project Path="src/OrbitalSentinel.Workers/OrbitalSentinel.Workers.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/OrbitalSentinel.ArchitectureTests/OrbitalSentinel.ArchitectureTests.csproj" />
+    <Project Path="tests/OrbitalSentinel.EndToEndTests/OrbitalSentinel.EndToEndTests.csproj" />
+    <Project Path="tests/OrbitalSentinel.IntegrationTests/OrbitalSentinel.IntegrationTests.csproj" />
+    <Project Path="tests/OrbitalSentinel.UnitTests/OrbitalSentinel.UnitTests.csproj" />
+  </Folder>
+</Solution>

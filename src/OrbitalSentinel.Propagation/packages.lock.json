@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0": {
+      "SGP.NET": {
+        "type": "Direct",
+        "requested": "[1.6.0, )",
+        "resolved": "1.6.0",
+        "contentHash": "zPPeMEyROMgd/GOqUoV0t8anefaX4OrDCf9KCmqXLWWmusx+RRR3mK05MStoj3WbNFS7MVH1I6WFNJS0AXMXXg=="
+      },
+      "orbitalsentinel.core": {
+        "type": "Project"
+      }
+    }
+  }
+}

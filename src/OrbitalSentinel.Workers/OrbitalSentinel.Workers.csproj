@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup>
+    <ProjectReference Include="../OrbitalSentinel.Runtime/OrbitalSentinel.Runtime.csproj" />
+  </ItemGroup>
+</Project>

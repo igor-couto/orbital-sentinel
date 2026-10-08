@@ -1,0 +1,196 @@
+name: CI/CD - Orbital Sentinel
+
+on:
+  push:
+    branches: ["main"]
+    paths-ignore:
+      - "README.md"
+      - "CODE_OF_CONDUCT.md"
+      - "SECURITY.md"
+      - "LICENCE.md"
+      - "docs/**"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_VERSION: 10.0.x
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/orbital-sentinel
+  IMAGE_TAG: ${{ github.sha }}
+  HOST_PORT: 50190
+  CONTAINER_PORT: 50090
+  SMOKE_PORT: 60190
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+          include-prerelease: true
+
+      - name: Restore dependencies
+        run: dotnet restore OrbitalSentinel.csproj
+
+      - name: Build project
+        run: dotnet build OrbitalSentinel.slnx --no-restore --configuration Release
+
+      - name: Run tests
+        run: |
+          mapfile -t test_projects < <(find . -type f \( -name "*Tests.csproj" -o -name "*Test.csproj" \))
+          if [ "${#test_projects[@]}" -eq 0 ]; then
+            echo "No test projects found."
+            exit 0
+          fi
+
+          for project in "${test_projects[@]}"; do
+            dotnet test "$project" --configuration Release
+          done
+
+  docker_image:
+    name: Build and Push Docker Image
+    needs: build
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | sudo docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Build and push Docker image (ARM64)
+        env:
+          DOCKER_BUILDKIT: 1
+        run: |
+          sudo docker build \
+            --platform linux/arm64 \
+            -f Dockerfile \
+            -t ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
+            -t ${{ env.IMAGE_NAME }}:latest \
+            --push \
+            .
+
+  deploy:
+    name: Deploy to Server
+    needs: docker_image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          SSH_PORT=${SSH_PORT:-22}
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts
+        shell: bash
+
+      - name: Pull and run container on server
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          SSH_PORT=${SSH_PORT:-22}
+
+          ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            "APP_ROOT='/home/$SSH_USER/apps/orbital-sentinel' IMAGE='${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}' CONTAINER_NAME='orbital-sentinel' HOST_PORT='${{ env.HOST_PORT }}' CONTAINER_PORT='${{ env.CONTAINER_PORT }}' SMOKE_PORT='${{ env.SMOKE_PORT }}' GHCR_USER='${{ github.actor }}' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          CANDIDATE_NAME="${CONTAINER_NAME}-candidate"
+          PROD_DATA_DIR="${APP_ROOT}/data"
+          SMOKE_DATA_DIR="${APP_ROOT}/smoke-data"
+
+          wait_for_http() {
+            local url="$1"
+            for attempt in $(seq 1 30); do
+              if command -v curl >/dev/null 2>&1; then
+                curl -fsS --max-time 5 "$url" >/dev/null && return 0
+              elif command -v wget >/dev/null 2>&1; then
+                wget -q --timeout=5 --tries=1 -O /dev/null "$url" && return 0
+              else
+                echo "curl or wget is required for deploy health checks."
+                return 1
+              fi
+              sleep 2
+            done
+            return 1
+          }
+
+          cleanup_candidate() {
+            sudo docker rm -f "$CANDIDATE_NAME" >/dev/null 2>&1 || true
+          }
+
+          run_app() {
+            local name="$1"
+            local port="$2"
+            local data_dir="$3"
+            local image="$4"
+            local restart_policy="$5"
+
+            sudo docker run -d \
+              --name "$name" \
+              --restart="$restart_policy" \
+              -p "127.0.0.1:${port}:${CONTAINER_PORT}" \
+              -v "${data_dir}:/data" \
+              -e "ConnectionStrings__DefaultConnection=Data Source=/data/app.db;Cache=Shared" \
+              "$image"
+          }
+
+          mkdir -p "$PROD_DATA_DIR" "$SMOKE_DATA_DIR"
+
+          echo "Logging in to GHCR..."
+          echo '${{ secrets.GITHUB_TOKEN }}' | sudo docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+          echo "Pulling image ${IMAGE}..."
+          sudo docker pull "$IMAGE"
+
+          echo "Smoke-testing candidate container..."
+          cleanup_candidate
+          trap cleanup_candidate EXIT
+          rm -rf "$SMOKE_DATA_DIR"
+          mkdir -p "$SMOKE_DATA_DIR"
+          run_app "$CANDIDATE_NAME" "$SMOKE_PORT" "$SMOKE_DATA_DIR" "$IMAGE" "no"
+          if ! wait_for_http "http://127.0.0.1:${SMOKE_PORT}/"; then
+            sudo docker logs "$CANDIDATE_NAME" || true
+            exit 1
+          fi
+          cleanup_candidate
+          trap - EXIT
+
+          PREVIOUS_IMAGE="$(sudo docker inspect --format='{{.Config.Image}}' "$CONTAINER_NAME" 2>/dev/null || true)"
+
+          echo "Replacing production container..."
+          sudo docker rm -f "$CONTAINER_NAME" || true
+          run_app "$CONTAINER_NAME" "$HOST_PORT" "$PROD_DATA_DIR" "$IMAGE" "always"
+
+          if ! wait_for_http "http://127.0.0.1:${HOST_PORT}/"; then
+            sudo docker logs "$CONTAINER_NAME" || true
+
+            if [ -n "$PREVIOUS_IMAGE" ]; then
+              echo "New container failed health check. Rolling back to ${PREVIOUS_IMAGE}..."
+              sudo docker rm -f "$CONTAINER_NAME" || true
+              run_app "$CONTAINER_NAME" "$HOST_PORT" "$PROD_DATA_DIR" "$PREVIOUS_IMAGE" "always"
+            fi
+
+            exit 1
+          fi
+
+          echo "Deployment completed successfully."
+          REMOTE
+        shell: bash
