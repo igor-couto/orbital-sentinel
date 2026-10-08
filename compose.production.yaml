@@ -1,0 +1,120 @@
+name: orbital-sentinel-production
+
+x-app-environment: &app-environment
+  ASPNETCORE_ENVIRONMENT: Production
+  ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=orbital_sentinel;Username=orbital;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+  Kafka__BootstrapServers: kafka:9092
+  AllowedHosts: orbital-sentinel.igorcouto.com;localhost;127.0.0.1;backend
+  CelesTrak__BaseUrl: https://celestrak.org/NORAD/elements/gp.php
+  CelesTrak__Groups__0: stations
+  CelesTrak__Groups__1: visual
+  CelesTrak__Groups__2: iridium-33-debris
+  CelesTrak__MaxObjects: 150
+  CelesTrak__RequestIntervalMinutes: 120
+  Prediction__HorizonHours: 24
+  Prediction__StepSeconds: 60
+
+x-service: &service
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  postgres:
+    <<: *service
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: orbital_sentinel
+      POSTGRES_USER: orbital
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orbital -d orbital_sentinel"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  kafka:
+    <<: *service
+    image: apache/kafka:4.0.1
+    hostname: kafka
+    environment:
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_HEAP_OPTS: -Xms256m -Xmx512m
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
+  backend:
+    <<: *service
+    image: ${IMAGE_PREFIX:?IMAGE_PREFIX must be set}-api:${IMAGE_TAG:?IMAGE_TAG must be set}
+    environment: *app-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+  workers:
+    <<: *service
+    image: ${IMAGE_PREFIX:?IMAGE_PREFIX must be set}-workers:${IMAGE_TAG:?IMAGE_TAG must be set}
+    environment: *app-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+  frontend:
+    <<: *service
+    image: ${IMAGE_PREFIX:?IMAGE_PREFIX must be set}-web:${IMAGE_TAG:?IMAGE_TAG must be set}
+    ports:
+      - "127.0.0.1:50190:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+volumes:
+  postgres-data:
+  kafka-data:

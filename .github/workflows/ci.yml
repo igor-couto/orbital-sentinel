@@ -9,7 +9,11 @@ on:
       - "SECURITY.md"
       - "LICENCE.md"
       - "docs/**"
+  pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -17,180 +21,146 @@ concurrency:
 
 env:
   DOTNET_VERSION: 10.0.x
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/orbital-sentinel
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/orbital-sentinel
   IMAGE_TAG: ${{ github.sha }}
-  HOST_PORT: 50190
-  CONTAINER_PORT: 50090
-  SMOKE_PORT: 60190
 
 jobs:
   build:
-    name: Build
+    name: Verify backend
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    timeout-minutes: 15
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup .NET SDK
-        uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-          include-prerelease: true
+      - run: dotnet restore OrbitalSentinel.slnx --locked-mode
+      - run: dotnet build OrbitalSentinel.slnx --no-restore --configuration Release
+      - run: dotnet test OrbitalSentinel.slnx --no-build --configuration Release
 
-      - name: Restore dependencies
-        run: dotnet restore OrbitalSentinel.slnx
+  frontend:
+    name: Verify frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: src/orbital-sentinel-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: src/orbital-sentinel-web/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
 
-      - name: Build project
-        run: dotnet build OrbitalSentinel.slnx --no-restore --configuration Release
-
-      - name: Run tests
+  deployment_config:
+    name: Verify deployment configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose and deployment scripts
+        env:
+          POSTGRES_PASSWORD: ci-validation-only
         run: |
-          mapfile -t test_projects < <(find . -type f \( -name "*Tests.csproj" -o -name "*Test.csproj" \))
-          if [ "${#test_projects[@]}" -eq 0 ]; then
-            echo "No test projects found."
-            exit 0
-          fi
-
-          for project in "${test_projects[@]}"; do
-            dotnet test "$project" --configuration Release
-          done
+          docker compose config --quiet
+          docker compose -f compose.production.yaml config --quiet
+          bash -n deploy/deploy.sh deploy/smoke-test.sh
+          shellcheck deploy/deploy.sh deploy/smoke-test.sh
 
   docker_image:
-    name: Build and Push Docker Image
-    needs: build
-    runs-on: self-hosted
+    name: Build and push ARM64 images
+    needs: [build, frontend, deployment_config]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: [self-hosted, linux, ARM64]
+    timeout-minutes: 40
     permissions:
       contents: read
       packages: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Log in to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | sudo docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-      - name: Build and push Docker image (ARM64)
+      - uses: actions/checkout@v4
+      - name: Build and publish API, worker, and web images
         env:
-          DOCKER_BUILDKIT: 1
+          GHCR_TOKEN: ${{ github.token }}
+          GHCR_USER: ${{ github.actor }}
+        shell: bash
         run: |
-          sudo docker build \
+          set -euo pipefail
+          # Keep credentials out of the shared runner's persistent Docker config.
+          docker_config=$(mktemp -d)
+          trap 'sudo -n rm -rf -- "$docker_config"' EXIT
+          printf '%s' "$GHCR_TOKEN" | sudo -n docker --config "$docker_config" login ghcr.io -u "$GHCR_USER" --password-stdin
+          image_prefix="${IMAGE_PREFIX,,}"
+          for target in api workers; do
+            sudo -n docker --config "$docker_config" build \
+              --platform linux/arm64 --target "$target" \
+              --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+              --tag "$image_prefix-$target:$IMAGE_TAG" \
+              --tag "$image_prefix-$target:latest" --push .
+          done
+          sudo -n docker --config "$docker_config" build \
             --platform linux/arm64 \
-            -f Dockerfile \
-            -t ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
-            -t ${{ env.IMAGE_NAME }}:latest \
-            --push \
-            .
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --tag "$image_prefix-web:$IMAGE_TAG" \
+            --tag "$image_prefix-web:latest" --push src/orbital-sentinel-web
 
   deploy:
-    name: Deploy to Server
+    name: Deploy to production
     needs: docker_image
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: https://orbital-sentinel.igorcouto.com
+    permissions:
+      contents: read
+      packages: read
+    env:
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
     steps:
+      - uses: actions/checkout@v4
       - name: Set up SSH
         env:
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
-        run: |
-          SSH_PORT=${SSH_PORT:-22}
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
         shell: bash
-
-      - name: Pull and run container on server
-        env:
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_USER: ${{ secrets.SSH_USER }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
         run: |
-          SSH_PORT=${SSH_PORT:-22}
-
-          ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
-            "APP_ROOT='/home/$SSH_USER/apps/orbital-sentinel' IMAGE='${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}' CONTAINER_NAME='orbital-sentinel' HOST_PORT='${{ env.HOST_PORT }}' CONTAINER_PORT='${{ env.CONTAINER_PORT }}' SMOKE_PORT='${{ env.SMOKE_PORT }}' GHCR_USER='${{ github.actor }}' bash -s" <<'REMOTE'
           set -euo pipefail
-
-          CANDIDATE_NAME="${CONTAINER_NAME}-candidate"
-          PROD_DATA_DIR="${APP_ROOT}/data"
-          SMOKE_DATA_DIR="${APP_ROOT}/smoke-data"
-
-          wait_for_http() {
-            local url="$1"
-            for attempt in $(seq 1 30); do
-              if command -v curl >/dev/null 2>&1; then
-                curl -fsS --max-time 5 "$url" >/dev/null && return 0
-              elif command -v wget >/dev/null 2>&1; then
-                wget -q --timeout=5 --tries=1 -O /dev/null "$url" && return 0
-              else
-                echo "curl or wget is required for deploy health checks."
-                return 1
-              fi
-              sleep 2
-            done
-            return 1
-          }
-
-          cleanup_candidate() {
-            sudo docker rm -f "$CANDIDATE_NAME" >/dev/null 2>&1 || true
-          }
-
-          run_app() {
-            local name="$1"
-            local port="$2"
-            local data_dir="$3"
-            local image="$4"
-            local restart_policy="$5"
-
-            sudo docker run -d \
-              --name "$name" \
-              --restart="$restart_policy" \
-              -p "127.0.0.1:${port}:${CONTAINER_PORT}" \
-              -v "${data_dir}:/data" \
-              -e "ConnectionStrings__DefaultConnection=Data Source=/data/app.db;Cache=Shared" \
-              "$image"
-          }
-
-          mkdir -p "$PROD_DATA_DIR" "$SMOKE_DATA_DIR"
-
-          echo "Logging in to GHCR..."
-          echo '${{ secrets.GITHUB_TOKEN }}' | sudo docker login ghcr.io -u "$GHCR_USER" --password-stdin
-
-          echo "Pulling image ${IMAGE}..."
-          sudo docker pull "$IMAGE"
-
-          echo "Smoke-testing candidate container..."
-          cleanup_candidate
-          trap cleanup_candidate EXIT
-          rm -rf "$SMOKE_DATA_DIR"
-          mkdir -p "$SMOKE_DATA_DIR"
-          run_app "$CANDIDATE_NAME" "$SMOKE_PORT" "$SMOKE_DATA_DIR" "$IMAGE" "no"
-          if ! wait_for_http "http://127.0.0.1:${SMOKE_PORT}/"; then
-            sudo docker logs "$CANDIDATE_NAME" || true
-            exit 1
+          : "${SSH_HOST:?SSH_HOST is required}" "${SSH_USER:?SSH_USER is required}" "${SSH_KEY:?SSH_KEY is required}"
+          SSH_PORT=${SSH_PORT:-22}
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          if [ -n "$SSH_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" > ~/.ssh/known_hosts
           fi
-          cleanup_candidate
-          trap - EXIT
+          chmod 600 ~/.ssh/known_hosts
 
-          PREVIOUS_IMAGE="$(sudo docker inspect --format='{{.Config.Image}}' "$CONTAINER_NAME" 2>/dev/null || true)"
-
-          echo "Replacing production container..."
-          sudo docker rm -f "$CONTAINER_NAME" || true
-          run_app "$CONTAINER_NAME" "$HOST_PORT" "$PROD_DATA_DIR" "$IMAGE" "always"
-
-          if ! wait_for_http "http://127.0.0.1:${HOST_PORT}/"; then
-            sudo docker logs "$CONTAINER_NAME" || true
-
-            if [ -n "$PREVIOUS_IMAGE" ]; then
-              echo "New container failed health check. Rolling back to ${PREVIOUS_IMAGE}..."
-              sudo docker rm -f "$CONTAINER_NAME" || true
-              run_app "$CONTAINER_NAME" "$HOST_PORT" "$PROD_DATA_DIR" "$PREVIOUS_IMAGE" "always"
-            fi
-
-            exit 1
-          fi
-
-          echo "Deployment completed successfully."
-          REMOTE
+      - name: Upload release configuration
         shell: bash
+        run: |
+          set -euo pipefail
+          SSH_PORT=${SSH_PORT:-22}
+          release="apps/orbital-sentinel/releases/$IMAGE_TAG"
+          ssh -o BatchMode=yes -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "umask 077; mkdir -p '$release'"
+          scp -o BatchMode=yes -P "$SSH_PORT" compose.production.yaml deploy/deploy.sh deploy/smoke-test.sh \
+            "$SSH_USER@$SSH_HOST:$release/"
+
+      - name: Deploy complete stack and verify web, API, and SignalR
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          GHCR_USER: ${{ github.actor }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SSH_PORT=${SSH_PORT:-22}
+          image_prefix="${IMAGE_PREFIX,,}"
+          printf '%s\n' "$GHCR_TOKEN" | ssh -o BatchMode=yes -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            "bash 'apps/orbital-sentinel/releases/$IMAGE_TAG/deploy.sh' '$image_prefix' '$IMAGE_TAG' '$GHCR_USER'"
