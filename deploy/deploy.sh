@@ -36,17 +36,12 @@ fi
 chmod 600 "$app_root/.env"
 printf 'IMAGE_PREFIX=%s\nIMAGE_TAG=%s\n' "$image_prefix" "$image_tag" > "$release_dir/images.env"
 
-docker_config=$(mktemp -d)
-cleanup() {
-  sudo -n rm -rf -- "$docker_config"
-}
-trap cleanup EXIT
 IFS= read -r ghcr_token
-printf '%s' "$ghcr_token" | sudo -n docker --config "$docker_config" login ghcr.io -u "$ghcr_user" --password-stdin
+printf '%s' "$ghcr_token" | sudo -n docker login ghcr.io -u "$ghcr_user" --password-stdin
 unset ghcr_token
 
 compose() {
-  sudo -n docker --config "$docker_config" compose \
+  sudo -n docker compose \
     --project-name orbital-sentinel-production \
     --env-file "$app_root/.env" --env-file "$release_dir/images.env" \
     -f "$release_dir/compose.production.yaml" "$@"

@@ -89,19 +89,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Keep credentials out of the shared runner's persistent Docker config.
-          docker_config=$(mktemp -d)
-          trap 'sudo -n rm -rf -- "$docker_config"' EXIT
-          printf '%s' "$GHCR_TOKEN" | sudo -n docker --config "$docker_config" login ghcr.io -u "$GHCR_USER" --password-stdin
+          # Keep the Docker subcommand first, matching the other projects' sudo rules.
+          printf '%s' "$GHCR_TOKEN" | sudo -n docker login ghcr.io -u "$GHCR_USER" --password-stdin
           image_prefix="${IMAGE_PREFIX,,}"
           for target in api workers; do
-            sudo -n docker --config "$docker_config" build \
+            sudo -n docker build \
               --platform linux/arm64 --target "$target" \
               --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
               --tag "$image_prefix-$target:$IMAGE_TAG" \
               --tag "$image_prefix-$target:latest" --push .
           done
-          sudo -n docker --config "$docker_config" build \
+          sudo -n docker build \
             --platform linux/arm64 \
             --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
             --tag "$image_prefix-web:$IMAGE_TAG" \
