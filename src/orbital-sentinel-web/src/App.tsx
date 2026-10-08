@@ -113,6 +113,16 @@ export function App() {
           </span>
         </a>
         <div className="topbar-divider" />
+        <div className="topbar-actions">
+          <span className="source-pill">
+            <span className="status-dot" />
+            CELESTRAK · OMM
+          </span>
+          <button className="secondary-button" onClick={data.refresh}>
+            <Icon name="refresh" size={15} />
+            Refresh data
+          </button>
+        </div>
         <div className="topbar-right">
           <span
             className={`connection ${data.connection === "live" ? "connected" : ""}`}
@@ -126,25 +136,7 @@ export function App() {
         </div>
       </header>
 
-      <main>
-        <section className="page-heading">
-          <div>
-            <div className="eyebrow">EARTH ORBIT / CATALOG & PROPAGATION</div>
-            <h1>Space traffic</h1>
-            <p>Real orbital data. A clearer view of what’s overhead.</p>
-          </div>
-          <div className="heading-actions">
-            <span className="source-pill">
-              <span className="status-dot" />
-              CELESTRAK · OMM
-            </span>
-            <button className="secondary-button" onClick={data.refresh}>
-              <Icon name="refresh" size={15} />
-              Refresh data
-            </button>
-          </div>
-        </section>
-
+      <main aria-label="Space traffic dashboard">
         <section className="metrics" aria-label="Catalog status">
           <div className="metric">
             <div className="metric-icon">
@@ -666,7 +658,8 @@ export function App() {
           </a>
         </nav>
         <span className="footer-warning">
-          Not for operational spacecraft decisions. This is just a personal project for fun :)
+          Not for operational spacecraft decisions. This is just a personal
+          project for fun :)
         </span>
       </footer>
 

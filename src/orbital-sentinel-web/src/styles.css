@@ -109,15 +109,10 @@ a {
   border-left: 1px solid #2b3542;
   margin-left: 5px;
 }
-.workspace-label {
-  font-size: 12px;
-  color: #a4b0c0;
-}
 .topbar-right {
   display: flex;
   align-items: center;
   gap: 25px;
-  margin-left: auto;
 }
 .connection {
   display: flex;
@@ -173,35 +168,18 @@ a {
 main {
   padding: 30px 38px 0;
 }
-.page-heading {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 25px;
-  margin-bottom: 25px;
-}
 .eyebrow {
   font-size: 9px;
   letter-spacing: 1.7px;
   color: #7e91a4;
   font-weight: 600;
 }
-h1 {
-  font-size: 31px;
-  line-height: 1.25;
-  letter-spacing: -1px;
-  font-weight: 600;
-  margin: 9px 0 6px;
-  color: #eef3f8;
-}
-.page-heading p {
-  color: #8898ab;
-  font-size: 12px;
-}
-.heading-actions {
+.topbar-actions {
   display: flex;
   align-items: center;
-  gap: 17px;
+  gap: 12px;
+  margin-left: auto;
+  white-space: nowrap;
 }
 .source-pill {
   display: flex;
@@ -1228,9 +1206,6 @@ h1 {
   .topbar-right {
     gap: 15px;
   }
-  .workspace-label {
-    display: none;
-  }
   .topbar-divider {
     display: none;
   }
@@ -1312,10 +1287,29 @@ h1 {
     height: 34px;
   }
 }
+@media (max-width: 900px) {
+  .topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    height: auto;
+    padding: 16px 22px;
+    gap: 14px 20px;
+  }
+  .topbar-actions {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-content: space-between;
+    margin-left: 0;
+  }
+  .topbar-right {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}
 @media (max-width: 700px) {
   .topbar {
-    height: 70px;
-    padding: 0 16px;
+    padding: 16px;
+    column-gap: 12px;
   }
   .brand {
     font-size: 12px;
@@ -1357,41 +1351,8 @@ h1 {
   main {
     padding: 24px 14px 0;
   }
-  .page-heading {
-    align-items: flex-start;
-    margin-bottom: 22px;
-    gap: 10px;
-  }
-  .page-heading .eyebrow {
-    font-size: 7px;
-    letter-spacing: 1px;
-  }
-  h1 {
-    font-size: 27px;
-  }
-  .page-heading p {
-    font-size: 10px;
-    max-width: 240px;
-    line-height: 1.6;
-  }
-  .heading-actions {
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 9px;
-  }
-  .source-pill {
-    font-size: 7px;
-    padding: 6px;
-    gap: 4px;
-    letter-spacing: 0.3px;
-  }
   .secondary-button {
-    font-size: 9px;
-    padding: 8px;
-    gap: 5px;
-  }
-  .secondary-button svg {
-    width: 12px;
+    min-height: 44px;
   }
   .metrics {
     gap: 7px;
