@@ -17,15 +17,17 @@ app_root=$(cd -- "$release_dir/../.." && pwd)
 for command in curl openssl flock; do
   command -v "$command" >/dev/null || { echo "$command is required." >&2; exit 1; }
 done
-sudo -n docker compose version
-sudo -n docker info >/dev/null
+# shellcheck source=deploy/docker-access.sh
+source "$release_dir/docker-access.sh"
+select_docker_command
+"${docker_command[@]}" compose version
 
 # Serialise manual executions too; no other application is stopped or pruned.
 exec 9>"$app_root/deploy.lock"
 flock -n 9 || { echo 'Another Orbital Sentinel deployment is running.' >&2; exit 1; }
 
 if [[ ! -e "$app_root/.env" ]]; then
-  if sudo -n docker volume inspect orbital-sentinel-production_postgres-data >/dev/null 2>&1; then
+  if "${docker_command[@]}" volume inspect orbital-sentinel-production_postgres-data >/dev/null 2>&1; then
     echo 'Existing database found without .env. Restore the saved database password before deploying.' >&2
     exit 1
   fi
@@ -37,11 +39,11 @@ chmod 600 "$app_root/.env"
 printf 'IMAGE_PREFIX=%s\nIMAGE_TAG=%s\n' "$image_prefix" "$image_tag" > "$release_dir/images.env"
 
 IFS= read -r ghcr_token
-printf '%s' "$ghcr_token" | sudo -n docker login ghcr.io -u "$ghcr_user" --password-stdin
+printf '%s' "$ghcr_token" | "${docker_command[@]}" login ghcr.io -u "$ghcr_user" --password-stdin
 unset ghcr_token
 
 compose() {
-  sudo -n docker compose \
+  "${docker_command[@]}" compose \
     --project-name orbital-sentinel-production \
     --env-file "$app_root/.env" --env-file "$release_dir/images.env" \
     -f "$release_dir/compose.production.yaml" "$@"

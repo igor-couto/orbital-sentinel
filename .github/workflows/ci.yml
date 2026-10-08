@@ -68,8 +68,9 @@ jobs:
         run: |
           docker compose config --quiet
           docker compose -f compose.production.yaml config --quiet
-          bash -n deploy/deploy.sh deploy/smoke-test.sh
-          shellcheck deploy/deploy.sh deploy/smoke-test.sh
+          for script in deploy/*.sh tests/deployment/*.sh; do bash -n "$script"; done
+          shellcheck -x deploy/*.sh tests/deployment/*.sh
+          bash tests/deployment/docker-access.test.sh
 
   docker_image:
     name: Build and push ARM64 images
@@ -89,17 +90,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Keep the Docker subcommand first, matching the other projects' sudo rules.
-          printf '%s' "$GHCR_TOKEN" | sudo -n docker login ghcr.io -u "$GHCR_USER" --password-stdin
+          source deploy/docker-access.sh
+          select_docker_command
+          printf '%s' "$GHCR_TOKEN" | "${docker_command[@]}" login ghcr.io -u "$GHCR_USER" --password-stdin
           image_prefix="${IMAGE_PREFIX,,}"
           for target in api workers; do
-            sudo -n docker build \
+            "${docker_command[@]}" build \
               --platform linux/arm64 --target "$target" \
               --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
               --tag "$image_prefix-$target:$IMAGE_TAG" \
               --tag "$image_prefix-$target:latest" --push .
           done
-          sudo -n docker build \
+          "${docker_command[@]}" build \
             --platform linux/arm64 \
             --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
             --tag "$image_prefix-web:$IMAGE_TAG" \
@@ -148,7 +150,7 @@ jobs:
           SSH_PORT=${SSH_PORT:-22}
           release="apps/orbital-sentinel/releases/$IMAGE_TAG"
           ssh -o BatchMode=yes -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "umask 077; mkdir -p '$release'"
-          scp -o BatchMode=yes -P "$SSH_PORT" compose.production.yaml deploy/deploy.sh deploy/smoke-test.sh \
+          scp -o BatchMode=yes -P "$SSH_PORT" compose.production.yaml deploy/deploy.sh deploy/smoke-test.sh deploy/docker-access.sh \
             "$SSH_USER@$SSH_HOST:$release/"
 
       - name: Deploy complete stack and verify web, API, and SignalR
