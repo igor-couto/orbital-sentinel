@@ -78,11 +78,31 @@ describe("data freshness", () => {
 });
 
 describe("object classification", () => {
-  it("recognizes common API casing without guessing unknown classifications", () => {
-    expect(objectKind("PAYLOAD")).toBe("payload");
-    expect(objectKind("Rocket Body")).toBe("rocket");
-    expect(objectKind("rocket_body")).toBe("rocket");
-    expect(objectKind("Debris")).toBe("debris");
-    expect(objectKind("UNKNOWN")).toBe("unknown");
+  it.each([
+    ["PAY", "payload"],
+    ["pay", "payload"],
+    [" PAY ", "payload"],
+    ["R/B", "rocket"],
+    ["r/b", "rocket"],
+    ["DEB", "debris"],
+    ["deb", "debris"],
+    ["PAYLOAD", "payload"],
+    ["Satellite", "payload"],
+    ["Spacecraft", "payload"],
+    ["Active Satellite", "payload"],
+    ["Rocket Body", "rocket"],
+    ["rocket_body", "rocket"],
+    ["rocket-body", "rocket"],
+    ["Rocket", "rocket"],
+    ["Debris", "debris"],
+  ])("classifies explicit type %s as %s", (type, expected) => {
+    expect(objectKind(type)).toBe(expected);
   });
+
+  it.each(["UNK", "unk", "UNKNOWN", "", "unrecognized", "ISS (ZARYA)"])(
+    "leaves unknown or unrecognized type %j unclassified",
+    (type) => {
+      expect(objectKind(type)).toBe("unknown");
+    },
+  );
 });

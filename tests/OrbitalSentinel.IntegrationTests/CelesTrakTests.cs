@@ -17,7 +17,7 @@ public sealed class CelesTrakTests
         """;
 
     [Fact]
-    public async Task Maps_OMM_numeric_strings_UTC_and_zero_values_without_guessing_object_type()
+    public async Task Maps_OMM_numeric_strings_UTC_and_zero_values_with_ambiguous_type_left_unknown()
     {
         var source = JsonNode.Parse(ValidOmm)!.AsObject();
         source["MEAN_ANOMALY"] = "0";
@@ -30,6 +30,65 @@ public sealed class CelesTrakTests
         Assert.Equal(0, row.Elements.MeanAnomalyDegrees);
         Assert.Equal("Unknown", row.ObjectType);
         Assert.Equal(1, handler.Attempts);
+    }
+
+    [Theory]
+    [InlineData("IRIDIUM 33 DEB", "Debris")]
+    [InlineData("COSMOS 2251 DEB", "Debris")]
+    [InlineData("FREGAT DEB", "Debris")]
+    [InlineData("BREEZE-M DEB [TANK]", "Debris")]
+    [InlineData("IRIDIUM 33 DEB (ALTERNATE NAME)", "Debris")]
+    [InlineData("BREEZE-M DEB [TANK] (ALTERNATE NAME)", "Debris")]
+    [InlineData("  iridium 33 deb  ", "Debris")]
+    [InlineData("CZ-4 R/B", "Rocket Body")]
+    [InlineData("SL-12 R/B(1)", "Rocket Body")]
+    [InlineData("SL-12 R/B(2)", "Rocket Body")]
+    [InlineData("SL-12 R/B(3)", "Rocket Body")]
+    [InlineData("SL-12 R/B(2) [STAGE]", "Rocket Body")]
+    [InlineData("ISS (ZARYA)", "Unknown")]
+    [InlineData("STARLINK-1234", "Unknown")]
+    [InlineData("OBJECT PLAT", "Unknown")]
+    [InlineData("DEBORAH", "Unknown")]
+    [InlineData("OBJECT DEB-TEST", "Unknown")]
+    [InlineData("OBJECT DEBRIS", "Unknown")]
+    [InlineData("OBJECT DEB UNKNOWN", "Unknown")]
+    [InlineData("OBJECT (IRIDIUM 33 DEB)", "Unknown")]
+    [InlineData("OBJECT [DEB]", "Unknown")]
+    [InlineData("OBJECT (ALIAS DEB", "Unknown")]
+    [InlineData("OBJECT DEB [TANK", "Unknown")]
+    [InlineData("OBJECT R/B(UNKNOWN)", "Unknown")]
+    [InlineData("OBJECT R/B(0)", "Unknown")]
+    [InlineData("OBJECT R/B DEB", "Unknown")]
+    [InlineData("OBJECT PLAT DEB", "Unknown")]
+    [InlineData("OBJECT & OTHER DEB", "Unknown")]
+    public async Task Missing_type_uses_only_unambiguous_CelesTrak_name_markers(string name, string expected)
+    {
+        var source = JsonNode.Parse(ValidOmm)!.AsObject();
+        source["OBJECT_NAME"] = name;
+        var handler = new FakeHandler((_, _) => Response($"[{source.ToJsonString()}]"));
+        var row = Assert.Single(await Client(handler).FetchAsync());
+        Assert.Equal(expected, row.ObjectType);
+    }
+
+    [Theory]
+    [InlineData(null, "Debris")]
+    [InlineData("", "Debris")]
+    [InlineData("  ", "Debris")]
+    [InlineData("PAYLOAD", "PAYLOAD")]
+    [InlineData("PAY", "PAY")]
+    [InlineData("  ROCKET BODY  ", "ROCKET BODY")]
+    [InlineData("DEB", "DEB")]
+    [InlineData("R/B", "R/B")]
+    [InlineData("Unknown", "Unknown")]
+    [InlineData("UNK", "UNK")]
+    [InlineData("OTHER", "OTHER")]
+    public async Task Supplied_type_takes_precedence_over_name_fallback(string? type, string expected)
+    {
+        var source = JsonNode.Parse(ValidOmm)!.AsObject();
+        source["OBJECT_NAME"] = "IRIDIUM 33 DEB";
+        source["OBJECT_TYPE"] = type;
+        var handler = new FakeHandler((_, _) => Response($"[{source.ToJsonString()}]"));
+        Assert.Equal(expected, Assert.Single(await Client(handler).FetchAsync()).ObjectType);
     }
 
     [Theory]

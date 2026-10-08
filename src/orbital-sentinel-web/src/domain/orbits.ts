@@ -61,13 +61,13 @@ export type ObjectKind = "payload" | "rocket" | "debris" | "unknown";
 export function objectKind(type: string): ObjectKind {
   const normalized = type.replace(/[\s_-]/g, "").toLowerCase();
   if (
-    ["payload", "satellite", "spacecraft", "activesatellite"].includes(
+    ["pay", "payload", "satellite", "spacecraft", "activesatellite"].includes(
       normalized,
     )
   )
     return "payload";
-  if (["rocketbody", "rocket"].includes(normalized)) return "rocket";
-  if (normalized === "debris") return "debris";
+  if (["r/b", "rocketbody", "rocket"].includes(normalized)) return "rocket";
+  if (["deb", "debris"].includes(normalized)) return "debris";
   return "unknown";
 }
 

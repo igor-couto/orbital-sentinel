@@ -52,6 +52,23 @@ public sealed class PersistenceTests(PostgresFixture fixture) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Classification_updates_existing_unknown_objects_without_new_orbital_revision()
+    {
+        var import = Import(34146) with { Name = "IRIDIUM 33 DEB" };
+        await Catalog.UpsertAsync(import);
+        var original = Assert.Single((await Catalog.ListAsync(1, 20, null)).Items);
+
+        Assert.False(await Catalog.UpsertAsync(import with { ObjectType = "Debris" }));
+        var updated = await Catalog.GetAsync(original.Object.Id);
+        Assert.Equal("Debris", updated!.Object.ObjectType);
+        Assert.Equal(original.Version, updated.Version);
+        Assert.Equal(original.Fingerprint, updated.Fingerprint);
+        Assert.Equal(1, await Count("orbital_objects"));
+        Assert.Equal(1, await Count("orbital_element_sets"));
+        Assert.Equal(1, await Count("outbox_messages"));
+    }
+
+    [Fact]
     public async Task Older_epoch_cannot_overwrite_and_versions_are_preserved()
     {
         var import = Import();

@@ -172,7 +172,7 @@ public sealed class CelesTrakClient
         elements.Validate();
         var name = string.IsNullOrWhiteSpace(source.ObjectName) ? $"NORAD {source.NoradCatalogId}" : source.ObjectName.Trim();
         if (name.Length > 200) throw new InvalidDataException("OBJECT_NAME exceeds 200 characters.");
-        var objectType = string.IsNullOrWhiteSpace(source.ObjectType) ? "Unknown" : source.ObjectType.Trim();
+        var objectType = CelesTrakObjectClassification.Resolve(name, source.ObjectType);
         if (objectType.Length > 100) throw new InvalidDataException("OBJECT_TYPE exceeds 100 characters.");
         return new CatalogImport(null, source.NoradCatalogId, name, source.ObjectId, objectType, elements);
     }

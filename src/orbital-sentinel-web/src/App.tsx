@@ -113,7 +113,6 @@ export function App() {
           </span>
         </a>
         <div className="topbar-divider" />
-        <span className="workspace-label">Mission overview</span>
         <div className="topbar-right">
           <span
             className={`connection ${data.connection === "live" ? "connected" : ""}`}
@@ -711,6 +710,12 @@ export function App() {
             predictions are converted to Earth-fixed coordinates there. This
             browser only interpolates those samples for visualization; it does
             not calculate orbital dynamics.
+          </p>
+          <h3>How object types are assigned</h3>
+          <p>
+            When CelesTrak supplies an object type, we use it. Otherwise, clear
+            naming markers such as DEB (debris) and R/B (rocket body) provide a
+            fallback. Ambiguous names stay Unclassified.
           </p>
           <h3>Time is part of the data</h3>
           <p>
