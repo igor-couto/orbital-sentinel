@@ -40,7 +40,7 @@ jobs:
           include-prerelease: true
 
       - name: Restore dependencies
-        run: dotnet restore OrbitalSentinel.csproj
+        run: dotnet restore OrbitalSentinel.slnx
 
       - name: Build project
         run: dotnet build OrbitalSentinel.slnx --no-restore --configuration Release
