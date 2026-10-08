@@ -667,7 +667,7 @@ export function App() {
           </a>
         </nav>
         <span className="footer-warning">
-          Not for operational spacecraft decisions
+          Not for operational spacecraft decisions. This is just a personal project for fun :)
         </span>
       </footer>
 
@@ -682,7 +682,7 @@ export function App() {
       >
         <div className="dialog-heading">
           <div>
-            <div className="eyebrow">PROJECT NOTES</div>
+            <div className="eyebrow">A PERSONAL PROJECT</div>
             <h2 id="about-title">About Orbital Sentinel</h2>
           </div>
           <button
@@ -694,6 +694,17 @@ export function App() {
           </button>
         </div>
         <div className="notes-body">
+          <p>
+            I’m Igor Couto, and I created Orbital Sentinel to learn and have fun
+            building something around my interest in space.
+          </p>
+          <a
+            href="https://github.com/igor-couto/orbital-sentinel"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            View the project on GitHub <Icon name="external" size={13} />
+          </a>
           <h3>Real inputs, predicted positions</h3>
           <p>
             CelesTrak OMM orbital elements are ingested by the backend. SGP4
