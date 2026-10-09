@@ -279,7 +279,6 @@ main {
   grid-template-columns: 270px minmax(320px, 1fr) 285px;
   gap: 16px;
   min-height: 650px;
-  height: min(720px, calc(100vh - 338px));
 }
 .panel {
   background: var(--panel);
@@ -1116,6 +1115,23 @@ main {
 }
 .notes-body a:hover {
   text-decoration: underline;
+}
+@media (min-width: 1001px) {
+  .app-shell {
+    height: 100vh;
+    height: 100dvh;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+  }
+  main {
+    display: grid;
+    grid-template-rows: auto minmax(650px, 1fr);
+  }
+  .operations-grid {
+    /* Let the layout set panel height instead of the scrollable catalog. */
+    contain: size;
+    grid-template-rows: minmax(0, 1fr);
+  }
 }
 @media (min-width: 1600px) {
   .operations-grid {
