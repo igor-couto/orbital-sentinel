@@ -1,30 +1,17 @@
 # Orbital Sentinel
 
+[![CI/CD - Orbital Sentinel](https://github.com/igor-couto/orbital-sentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/igor-couto/orbital-sentinel/actions/workflows/ci.yml)
+![.NET 10](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)
+![React](https://img.shields.io/badge/React-149ECA?logo=react&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white)
+![Apache Kafka](https://img.shields.io/badge/Apache_Kafka-231F20?logo=apachekafka&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
+
 A real-time space traffic monitoring, conjunction analysis, and collision-avoidance simulation platform built with .NET.
 
-**Current increment: catalog, propagation, and visualization.** This repository starts with a working vertical slice rather than claiming the entire platform is implemented. CelesTrak orbital elements flow through PostgreSQL, a transactional outbox, Kafka, SGP4, and a React/Cesium dashboard. Conjunction detection, risk assessment, encounter history, and manoeuvre simulation are the next increments; see the [roadmap](docs/roadmap.md) and [original specification](docs/product-specification.md).
+![Orbital Sentinel running with real CelesTrak objects and a selected trajectory](docs/screenshots/dashboard.png)
 
 This is an engineering demonstrator, **not a system for operational spacecraft decisions**. Public general-perturbation elements, an approximate coordinate conversion, and the absence of covariance information limit what can be concluded from its predictions.
-
-## Run locally
-
-Requires Docker Desktop with Linux containers, or Docker Engine with Compose. No Cesium ion account, API key, or local .NET installation is required for the containerized app.
-
-```sh
-docker compose up --build -d
-```
-
-Open [the dashboard](http://localhost:8088). The [OpenAPI document](http://localhost:5080/openapi/v1.json) and [readiness endpoint](http://localhost:5080/health/ready) are also available. Set `WEB_PORT` in `.env` if port 8088 is occupied.
-
-The first build downloads images and packages. The worker retrieves the configured CelesTrak groups after startup; predictions then appear asynchronously. If upstream data cannot be fetched, the UI shows an empty catalog rather than invented objects. Check `docker compose logs workers`. Existing data survives application restarts in named PostgreSQL and Kafka volumes.
-
-```sh
-docker compose ps
-docker compose logs --tail=100 workers
-docker compose down
-```
-
-`down` preserves the data volumes. The committed password is a disposable **local-only** default, and exposed ports bind to loopback. Copy `.env.example` to `.env` to override it. Deployment requires managed secrets, TLS at a trusted ingress, appropriate host names, broker security, and infrastructure provisioning.
 
 ## What works
 
@@ -38,13 +25,9 @@ docker compose down
 - React/TypeScript/Cesium Earth, selection, predicted path, time preview, element freshness, and honest loading/failure states. Earth imagery and Cesium assets are served locally.
 - Real PostgreSQL/Kafka integration tests, reference-vector tests, source-adapter tests, and CI.
 
-OMM feeds often omit object type. Such objects are explicitly **Unknown**; names are not used to manufacture authoritative classification. A SATCAT enrichment step is planned. A group-based selection gives a useful variety but does not guarantee a particular number of each type.
+OMM feeds often omit object type. A supplied `OBJECT_TYPE` takes precedence; when it is missing, null, or blank, the importer falls back to clear [CelesTrak naming markers](https://celestrak.org/satcat/satcat-format.php): a terminal `DEB` becomes **Debris**, and `R/B` or a numbered stage such as `R/B(2)` becomes **Rocket Body**. Trailing alternate names and bracketed descriptions do not supply a classification themselves. Conflicting markers, attached objects (`&`), platforms (`PLAT`), and names without a clear category remain **Unclassified**; a name without `DEB` or `R/B` is not assumed to be a payload. Explicit source types, including unknown or unsupported values, are never replaced by a name inference. The frontend also recognizes SATCAT type codes `PAY`, `R/B`, `DEB`, and `UNK`.
 
-## Dashboard
-
-![Orbital Sentinel running with real CelesTrak objects and a selected trajectory](docs/screenshots/dashboard.png)
-
-Captured from the local running application on 8 October 2026. Positions and element revisions change as new data arrives.
+Existing records acquire the fallback classification on the next successful scheduled import (every two hours by default), even when their orbital elements have not changed. No additional source polling or database reset is needed. Full SATCAT metadata enrichment remains planned. A group-based selection gives a useful variety but does not guarantee a particular number of each type.
 
 ## Architecture
 
@@ -78,7 +61,7 @@ flowchart LR
 | `src/orbital-sentinel-web` | API clients, view models, React components, Cesium rendering |
 | `tests` | Unit, PostgreSQL/source-adapter integration, and Kafka/API end-to-end checks |
 
-There is no generic repository, service layer hierarchy, EF Core dependency, or speculative microservice boundary. Dapper executes parameterized SQL; integration tests exercise PostgreSQL mappings and transactions directly. Read [architecture and delivery guarantees](docs/architecture.md) for the concurrency assumptions.
+There is no generic repository, service layer hierarchy, EF Core dependency, or speculative microservice boundary. Dapper executes parameterized SQL; integration tests exercise PostgreSQL mappings and transactions directly.
 
 ## Orbital processing
 
@@ -86,7 +69,7 @@ The application explicitly asks for `FORMAT=JSON`. CelesTrak JSON uses OMM field
 
 A durable database schedule permits one ingestion cycle per two hours across worker instances and restarts. HTTP timeouts, bounded transient retries, response-size limits, cancellation, and structured errors protect ingestion. 403/404 responses are never retried within a cycle. A partial failed multi-group download does not replace the existing catalog. Individual malformed records are logged and rejected; healthy records remain usable.
 
-SGP.NET 1.6.0 maps numerical OMM values directly into its propagator without a formatted TLE round trip. **SGP4 state vectors are TEME Cartesian kilometres and kilometres/second**, not latitude/longitude/altitude. Only the visualization boundary rotates position using GMST and converts kilometres to metres for Cesium's fixed frame. It assumes UT1≈UTC and omits polar motion, so this is approximate Earth-fixed positioning, not precise ITRF. See [scientific assumptions and references](docs/scientific-model.md).
+SGP.NET 1.6.0 maps numerical OMM values directly into its propagator without a formatted TLE round trip. **SGP4 state vectors are TEME Cartesian kilometres and kilometres/second**, not latitude/longitude/altitude. Only the visualization boundary rotates position using GMST and converts kilometres to metres for Cesium's fixed frame. It assumes UT1≈UTC and omits polar motion, so this is approximate Earth-fixed positioning, not precise ITRF.
 
 Only the most recent trajectory per object is cached (typically 1,441 samples). A refresh command extends its window even when upstream elements are unchanged. Historical element revisions are retained. The current-position endpoint returns the nearest cached sample **with that sample's actual timestamp**, potentially up to half an interval before or after now. The browser interpolates only the selected object's cached samples for display; it does not implement SGP4. Preview mode hides other objects to avoid implying a synchronized scene at an unrelated time.
 
@@ -94,9 +77,29 @@ Only the most recent trajectory per object is cached (typically 1,441 samples). 
 
 The database transaction, not a Kafka producer call, is the commit point for a business change. An outbox publisher claims a single eligible message with `FOR UPDATE SKIP LOCKED`, publishes it, and marks it published only while it still owns the lease. A crash after Kafka accepts the message but before PostgreSQL acknowledges it causes redelivery. **This is at-least-once delivery, not exactly-once processing.**
 
-Object UUIDs are Kafka keys. The durable propagation consumer records `(consumer_name, event_id)` and its business changes atomically. Version checks stop delayed updates from replacing newer predictions. After eight failed/expired publication attempts, a message is retained in a dead-letter state so it cannot block subsequent work forever. Known invalid messages are quarantined immediately; unexpected processing errors have three attempts. Database/Kafka outages leave offsets uncommitted and are retried by background service recovery. [Recovery procedures](docs/operations.md) explain inspection and controlled replay.
+Object UUIDs are Kafka keys. The durable propagation consumer records `(consumer_name, event_id)` and its business changes atomically. Version checks stop delayed updates from replacing newer predictions. After eight failed/expired publication attempts, a message is retained in a dead-letter state so it cannot block subsequent work forever. Known invalid messages are quarantined immediately; unexpected processing errors have three attempts. Database/Kafka outages leave offsets uncommitted and are retried by background service recovery.
 
 SignalR carries a small `TrajectoryAvailable` client contract, not trajectory arrays or internal event payloads. Each API instance uses its own Kafka notification group, so all instances can notify their connected clients. Notifications are advisory: startup, disconnects, and duplicates are handled by browser polling. Multi-instance SignalR deployments require session affinity unless clients use WebSockets exclusively with negotiation skipped; see the deployment notes.
+
+## Run locally
+
+Requires Docker Desktop with Linux containers, or Docker Engine with Compose. No Cesium ion account, API key, or local .NET installation is required for the containerized app.
+
+```sh
+docker compose up --build -d
+```
+
+Open [the dashboard](http://localhost:8088). The [OpenAPI document](http://localhost:5080/openapi/v1.json) and [readiness endpoint](http://localhost:5080/health/ready) are also available. Set `WEB_PORT` in `.env` if port 8088 is occupied.
+
+The first build downloads images and packages. The worker retrieves the configured CelesTrak groups after startup; predictions then appear asynchronously. If upstream data cannot be fetched, the UI shows an empty catalog rather than invented objects. Check `docker compose logs workers`. Existing data survives application restarts in named PostgreSQL and Kafka volumes.
+
+```sh
+docker compose ps
+docker compose logs --tail=100 workers
+docker compose down
+```
+
+`down` preserves the data volumes. The committed password is a disposable **local-only** default, and exposed ports bind to loopback. Copy `.env.example` to `.env` to override it.
 
 ## Develop without application containers
 
@@ -163,6 +166,6 @@ Docker must be running for integration and end-to-end tests. Testcontainers uses
 
 Hosts expose `/health/live` and `/health/ready`; readiness checks PostgreSQL and Kafka, not source freshness or consumer lag. Structured logs contain event/object/correlation IDs and Kafka positions, without trajectory arrays. The `OrbitalSentinel` .NET Meter exposes ingestion changes/failures, propagation duration/completions, publication failures, and quarantine counts. ActivitySource spans cover ingestion and propagation. An OTLP exporter, consumer-lag dashboard, durable job status, and freshness alarms are future observability work; the repository does not claim to ship them yet.
 
-## Next implementation boundary
+## Author
 
-Conjunction detection will consume `TrajectoryUpdated`, use a replaceable all-pairs candidate search, refine closest approach using fresh TEME states, and preserve encounter observations separately from stable encounter identity. It must not measure scientific miss distances using these visualization samples. The [next-increment design](docs/roadmap.md) explains candidate screening, risk transparency, simulation isolation, and likely scaling bottlenecks.
+* **Igor Couto** - [igor.fcouto@gmail.com](mailto:igor.fcouto@gmail.com)
