@@ -71,6 +71,7 @@ jobs:
           for script in deploy/*.sh tests/deployment/*.sh; do bash -n "$script"; done
           shellcheck -x deploy/*.sh tests/deployment/*.sh
           bash tests/deployment/docker-access.test.sh
+          bash tests/deployment/smoke-test.test.sh
 
   docker_image:
     name: Build and push ARM64 images
