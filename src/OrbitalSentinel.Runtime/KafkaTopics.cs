@@ -11,7 +11,8 @@ public static class KafkaTopics
         using var admin = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = options.BootstrapServers }).Build();
         try
         {
-            await admin.CreateTopicsAsync(new[] { options.OrbitTopic, options.TrajectoryTopic, options.DeadLetterTopic }
+            await admin.CreateTopicsAsync(new[] { options.OrbitTopic, options.TrajectoryTopic, options.DeadLetterTopic,
+                    options.PredictionRunTopic, options.ConjunctionTopic }
                 .Select(name => new TopicSpecification
                 {
                     Name = name,

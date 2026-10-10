@@ -11,11 +11,11 @@ A real-time space traffic monitoring, conjunction analysis, and collision-avoida
 
 ![Orbital Sentinel running with real CelesTrak objects and a selected trajectory](docs/screenshots/dashboard.png)
 
-This is an engineering demonstrator, **not a system for operational spacecraft decisions**. Public general-perturbation elements, an approximate coordinate conversion, and the absence of covariance information limit what can be concluded from its predictions.
+This is an engineering demonstrator, **not a system for operational spacecraft decisions**. Obviously. I'm just a random guy on the internet. Public general-perturbation elements, an approximate coordinate conversion, and the absence of covariance information limit what can be concluded from its predictions.
 
 ## What works
 
-- OMM-compatible JSON from CelesTrak, validated through a separate external DTO, with a bounded 150-object selection across stations, visual objects, and Iridium 33 debris.
+- OMM-compatible JSON from CelesTrak, validated through a separate external DTO, with a bounded 150-object selection.
 - Internal UUID identities; optional NORAD IDs remain external identifiers. Orbital elements are immutable revisions, detected using a canonical fingerprint of every dynamical field.
 - Transactional state + outbox writes, concurrent publication leases, per-object ordering, finite publication attempts, durable quarantine, and atomic consumer inbox + trajectory + outgoing-event writes.
 - Kafka-driven SGP4 predictions: default 24-hour horizon at 60-second intervals, including position and velocity at a requested instant through the propagation abstraction.
@@ -24,6 +24,8 @@ This is an engineering demonstrator, **not a system for operational spacecraft d
 - SignalR trajectory-availability notifications, with REST reconciliation when notifications are missed.
 - React/TypeScript/Cesium Earth, selection, predicted path, time preview, element freshness, and honest loading/failure states. Earth imagery and Cesium assets are served locally.
 - Real PostgreSQL/Kafka integration tests, reference-vector tests, source-adapter tests, and CI.
+- Coherent prediction runs with in-memory TEME screening, direct-SGP4 TCA refinement, immutable conjunction assessments, and separate identification/reassessment events.
+- A Conjunctions view with pair trajectories, assessment history, and an isolated deterministic crossing-orbits simulation.
 
 OMM feeds often omit object type. A supplied `OBJECT_TYPE` takes precedence; when it is missing, null, or blank, the importer falls back to clear [CelesTrak naming markers](https://celestrak.org/satcat/satcat-format.php): a terminal `DEB` becomes **Debris**, and `R/B` or a numbered stage such as `R/B(2)` becomes **Rocket Body**. Trailing alternate names and bracketed descriptions do not supply a classification themselves. Conflicting markers, attached objects (`&`), platforms (`PLAT`), and names without a clear category remain **Unclassified**; a name without `DEB` or `R/B` is not assumed to be a payload. Explicit source types, including unknown or unsupported values, are never replaced by a name inference. The frontend also recognizes SATCAT type codes `PAY`, `R/B`, `DEB`, and `UNK`.
 
@@ -31,9 +33,9 @@ Existing records acquire the fallback classification on the next successful sche
 
 ## Architecture
 
-The implemented stack is .NET 10/C#/ASP.NET Core, Dapper/Npgsql, PostgreSQL 17, Apache Kafka, SGP.NET, React/TypeScript, CesiumJS, SignalR, and Docker Compose. xUnit and Testcontainers verify the backend; Vitest verifies browser data handling. Package versions are pinned in project files and committed lockfiles.
+The implemented stack is .NET 10/C#/ASP.NET Core, Dapper/Npgsql, PostgreSQL 17, Apache Kafka, SGP.NET, React/TypeScript, CesiumJS, SignalR, and Docker Compose. xUnit and Testcontainers verify the backend. Vitest verifies browser data handling. Package versions are pinned in project files and committed lockfiles.
 
-A modular monolith shares domain and infrastructure code between two independently hosted processes. The API performs bounded reads; workers own ingestion, propagation, and message delivery. Kafka is required to move an ingested change into a trajectory prediction.
+A modular monolith shares domain and infrastructure code between two independently hosted processes. The API performs bounded reads and accepts predefined simulation requests; workers own ingestion, propagation, conjunction scans, and message delivery. Kafka is required to move an ingested change into a trajectory prediction and a completed prediction context into a durable conjunction scan.
 
 ```mermaid
 flowchart LR
@@ -164,7 +166,7 @@ npm audit
 
 Docker must be running for integration and end-to-end tests. Testcontainers uses disposable PostgreSQL and Kafka instances; tests do not need CelesTrak access and do not alter the Compose catalog. Unit tests cover domain validation, fingerprint stability, SGP4 reference vectors, coordinates, prediction bounds, and cancellation. Integration tests cover real transactions, rollback injection, migration checksums, leases, duplicate/stale events, quarantine, schedules, and malformed/transient HTTP responses. End-to-end tests traverse outbox → Kafka → SGP4 → cache/outbox → API and notifications.
 
-Hosts expose `/health/live` and `/health/ready`; readiness checks PostgreSQL and Kafka, not source freshness or consumer lag. Structured logs contain event/object/correlation IDs and Kafka positions, without trajectory arrays. The `OrbitalSentinel` .NET Meter exposes ingestion changes/failures, propagation duration/completions, publication failures, and quarantine counts. ActivitySource spans cover ingestion and propagation. An OTLP exporter, consumer-lag dashboard, durable job status, and freshness alarms are future observability work; the repository does not claim to ship them yet.
+Hosts expose `/health/live` and `/health/ready`; readiness checks PostgreSQL and Kafka, not source freshness or consumer lag. Structured logs contain event/object/correlation IDs and Kafka positions, without trajectory arrays. The `OrbitalSentinel` .NET Meter exposes ingestion changes/failures, propagation duration/completions, publication failures, quarantine counts, and conjunction workload/duration/failure measurements. ActivitySource spans cover ingestion, propagation, and conjunction scans. Prediction-run status is queryable through the API. An OTLP exporter, consumer-lag dashboard, and freshness alarms remain future work.
 
 ## Author
 

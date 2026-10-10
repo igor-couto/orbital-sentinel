@@ -22,7 +22,7 @@ public sealed class PostgresFixture : IAsyncLifetime
         await using var connection = await DataSource.OpenConnectionAsync();
         await connection.ExecuteAsync("""
             TRUNCATE outbox_messages, processed_messages, trajectory_predictions, orbital_element_sets,
-                orbital_objects, consumer_failures, job_schedules RESTART IDENTITY CASCADE;
+                orbital_objects, consumer_failures, job_schedules, conjunction_scopes RESTART IDENTITY CASCADE;
             """);
     }
 

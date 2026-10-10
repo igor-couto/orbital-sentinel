@@ -27,12 +27,28 @@ public interface IOrbitPropagator
 {
     StateVector Propagate(OrbitSnapshot orbit, DateTimeOffset timestampUtc);
 
+    /// <summary>
+    /// Creates an evaluator owned by one calculation. Implementations may reuse propagation
+    /// initialization; callers must not share an evaluator between concurrent calculations.
+    /// </summary>
+    IOrbitEvaluator CreateEvaluator(OrbitSnapshot orbit) => new DirectOrbitEvaluator(this, orbit);
+
     Trajectory Predict(
         OrbitSnapshot orbit,
         DateTimeOffset startUtc,
         TimeSpan horizon,
         TimeSpan step,
         CancellationToken cancellationToken);
+}
+
+public interface IOrbitEvaluator
+{
+    StateVector Evaluate(DateTimeOffset timestampUtc);
+}
+
+internal sealed class DirectOrbitEvaluator(IOrbitPropagator propagator, OrbitSnapshot orbit) : IOrbitEvaluator
+{
+    public StateVector Evaluate(DateTimeOffset timestampUtc) => propagator.Propagate(orbit, timestampUtc);
 }
 
 /// <summary>Expected failure to propagate a particular orbit; preserves diagnostic context for workers.</summary>

@@ -31,6 +31,12 @@ builder.Services.AddRateLimiter(options =>
         limiter.Window = TimeSpan.FromMinutes(1);
         limiter.QueueLimit = 0;
     });
+    options.AddFixedWindowLimiter("simulation", limiter =>
+    {
+        limiter.PermitLimit = 6;
+        limiter.Window = TimeSpan.FromMinutes(1);
+        limiter.QueueLimit = 0;
+    });
     options.OnRejected = async (context, cancellationToken) =>
     {
         context.HttpContext.Response.Headers.RetryAfter = "60";
@@ -54,7 +60,7 @@ app.MapHub<TrafficHub>("/hubs/traffic");
 var api = app.MapGroup("/api").RequireRateLimiting("read");
 api.MapGet("/status", () => Results.Ok(new
 {
-    stage = "catalog-and-propagation",
+    stage = "conjunction-screening",
     source = "Real",
     coordinateFrame = "TEME rotated by GMST to approximate Earth-fixed; metres",
     scientificUse = "Educational visualization; not for spacecraft operations."
@@ -91,6 +97,8 @@ api.MapGet("/orbital-objects/{id:guid}/trajectory", async (Guid id, CatalogRepos
     context.Response.Headers.CacheControl = "private, max-age=30";
     return Results.Ok(trajectory);
 }).WithName("GetTrajectory");
+
+api.MapConjunctionEndpoints();
 
 await app.RunAsync();
 public partial class Program;

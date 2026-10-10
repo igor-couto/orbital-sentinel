@@ -135,12 +135,17 @@ export function parseTrajectory(value: unknown, objectId: string): Trajectory {
   return value as unknown as Trajectory;
 }
 
-async function request(path: string, signal: AbortSignal): Promise<Response> {
+export async function request(
+  path: string,
+  signal: AbortSignal,
+  options: RequestInit = {},
+): Promise<Response> {
   let response: Response;
   try {
     response = await fetch(path, {
+      ...options,
       signal: AbortSignal.any([signal, AbortSignal.timeout(12_000)]),
-      headers: { Accept: "application/json" },
+      headers: { Accept: "application/json", ...options.headers },
     });
   } catch (error) {
     if (signal.aborted) throw error;

@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 
 type IconName =
+  | "close"
   | "orbit"
   | "search"
   | "layers"
@@ -14,6 +15,7 @@ type IconName =
   | "signal"
   | "external";
 const paths: Record<IconName, React.ReactNode> = {
+  close: <path d="m6 6 12 12M18 6 6 18" />,
   orbit: (
     <>
       <circle cx="12" cy="12" r="5" />

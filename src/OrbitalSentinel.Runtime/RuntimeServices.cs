@@ -23,12 +23,18 @@ public static class RuntimeServices
         services.AddSingleton<OutboxRepository>();
         services.AddSingleton<ConsumerFailureRepository>();
         services.AddSingleton<JobScheduleRepository>();
+        services.AddSingleton<ConjunctionRepository>();
+        services.AddSingleton<IConjunctionScanner, ConjunctionScanner>();
+        services.AddSingleton<ConjunctionApplication>();
         services.AddSingleton<IOrbitPropagator, Sgp4OrbitPropagator>();
         services.AddOptions<KafkaOptions>().Bind(configuration.GetSection("Kafka"))
-            .ValidateDataAnnotations().Validate(x => new[] { x.OrbitTopic, x.TrajectoryTopic, x.DeadLetterTopic }.Distinct().Count() == 3,
+            .ValidateDataAnnotations().Validate(x => new[] { x.OrbitTopic, x.TrajectoryTopic, x.DeadLetterTopic, x.PredictionRunTopic, x.ConjunctionTopic }.Distinct().Count() == 5,
                 "Kafka topics must be distinct.").ValidateOnStart();
         services.AddOptions<PredictionOptions>().Bind(configuration.GetSection("Prediction"))
             .ValidateDataAnnotations().ValidateOnStart();
+        services.AddOptions<ConjunctionOptions>().Bind(configuration.GetSection("ConjunctionScreening"))
+            .ValidateDataAnnotations().Validate(x => x.ReportingDistanceKm <= x.CandidateDistanceKm,
+                "Reporting distance must not exceed the candidate screening distance.").ValidateOnStart();
         services.AddOptions<CelesTrakOptions>()
             // The configuration binder appends to initialized arrays. Clear defaults before binding.
             .Configure(x => x.Groups = [])

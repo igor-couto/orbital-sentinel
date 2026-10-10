@@ -12,6 +12,7 @@ import type {
   Trajectory,
 } from "../domain/orbits";
 import { Icon } from "./Icon";
+import type { ConjunctionVisualization } from "../domain/conjunctions";
 
 declare global {
   interface Window {
@@ -29,6 +30,8 @@ interface Props {
   preview: boolean;
   showTrajectory: boolean;
   onSelect: (id: string) => void;
+  encounter?: ConjunctionVisualization | null;
+  focusRequest?: number;
 }
 
 export function Globe({
@@ -40,6 +43,8 @@ export function Globe({
   preview,
   showTrajectory,
   onSelect,
+  encounter,
+  focusRequest,
 }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
@@ -156,6 +161,127 @@ export function Globe({
     const lookup = new Map(objects.map((item) => [item.object.id, item]));
     viewer.entities.suspendEvents();
     viewer.entities.removeAll();
+    if (encounter) {
+      const tca = Date.parse(encounter.timeOfClosestApproachUtc);
+      const pair = [
+        {
+          orbit: encounter.primary,
+          path: encounter.primaryTrajectory,
+          color: "#76e3b6",
+          label: "A",
+        },
+        {
+          orbit: encounter.secondary,
+          path: encounter.secondaryTrajectory,
+          color: "#a9caff",
+          label: "B",
+        },
+      ];
+      for (const member of pair) {
+        const sampled = new C.SampledPositionProperty(C.ReferenceFrame.FIXED);
+        sampled.setInterpolationOptions({
+          interpolationDegree: 1,
+          interpolationAlgorithm: C.LinearApproximation,
+        });
+        for (const point of member.path.points)
+          sampled.addSample(
+            C.JulianDate.fromIso8601(point.timestampUtc),
+            new C.Cartesian3(
+              point.positionEcefMeters.x,
+              point.positionEcefMeters.y,
+              point.positionEcefMeters.z,
+            ),
+          );
+        viewer.entities.add({
+          id: `encounter-object:${member.orbit.object.id}`,
+          name: member.orbit.object.name,
+          position: sampled,
+          availability: new C.TimeIntervalCollection([
+            C.TimeInterval.fromIso8601({
+              iso8601: `${member.path.startUtc}/${member.path.endUtc}`,
+            }),
+          ]),
+          point: {
+            pixelSize: 11,
+            color: C.Color.fromCssColorString(member.color),
+            outlineColor: C.Color.fromCssColorString("#0b1018"),
+            outlineWidth: 2,
+          },
+          label: {
+            text: `${member.label} · ${member.orbit.object.name}`,
+            font: "12px sans-serif",
+            fillColor: C.Color.fromCssColorString(member.color),
+            pixelOffset: new C.Cartesian2(0, member.label === "A" ? -27 : 27),
+            showBackground: true,
+            backgroundColor:
+              C.Color.fromCssColorString("#0d1b27").withAlpha(0.9),
+            backgroundPadding: new C.Cartesian2(8, 5),
+          },
+        });
+        // A focused arc around TCA keeps the crossing readable without drawing 24h of loops.
+        viewer.entities.add({
+          id: `encounter-path:${member.label}`,
+          polyline: {
+            positions: member.path.points
+              .filter(
+                (point) =>
+                  Math.abs(Date.parse(point.timestampUtc) - tca) <= 30 * 60_000,
+              )
+              .map(
+                (point) =>
+                  new C.Cartesian3(
+                    point.positionEcefMeters.x,
+                    point.positionEcefMeters.y,
+                    point.positionEcefMeters.z,
+                  ),
+              ),
+            width: 2,
+            arcType: C.ArcType.NONE,
+            material: C.Color.fromCssColorString(member.color).withAlpha(0.85),
+          },
+        });
+      }
+      const a = encounter.primaryPositionEcefMeters;
+      const b = encounter.secondaryPositionEcefMeters;
+      viewer.entities.add({
+        id: "encounter-tca",
+        position: new C.Cartesian3(
+          (a.x + b.x) / 2,
+          (a.y + b.y) / 2,
+          (a.z + b.z) / 2,
+        ),
+        point: {
+          pixelSize: 22,
+          color: C.Color.TRANSPARENT,
+          outlineColor: C.Color.WHITE,
+          outlineWidth: 2,
+        },
+        label: {
+          text: `${encounter.source === "Simulation" ? "SIMULATION · " : ""}CLOSEST APPROACH`,
+          font: "11px sans-serif",
+          fillColor: C.Color.WHITE,
+          pixelOffset: new C.Cartesian2(0, -54),
+          showBackground: true,
+          backgroundColor: C.Color.fromCssColorString("#0d1b27").withAlpha(0.9),
+          backgroundPadding: new C.Cartesian2(8, 5),
+        },
+      });
+      viewer.entities.add({
+        id: "encounter-separation",
+        polyline: {
+          positions: [
+            new C.Cartesian3(a.x, a.y, a.z),
+            new C.Cartesian3(b.x, b.y, b.z),
+          ],
+          width: 2,
+          arcType: C.ArcType.NONE,
+          material: C.Color.WHITE,
+        },
+      });
+      viewer.entities.resumeEvents();
+      viewer.scene.requestRender();
+      return;
+    }
     for (const position of positions) {
       const orbit = lookup.get(position.orbitalObjectId);
       if (!orbit || (position.orbitalObjectId === selectedId && trajectory))
@@ -228,13 +354,17 @@ export function Globe({
     }
     viewer.entities.resumeEvents();
     viewer.scene.requestRender();
-  }, [ready, objects, positions, selected, selectedId, trajectory]);
+  }, [ready, objects, positions, selected, selectedId, trajectory, encounter]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
     const C = window.Cesium;
     if (!ready || !viewer || !C) return;
     viewer.clock.currentTime = C.JulianDate.fromDate(new Date(timestamp));
+    if (encounter) {
+      viewer.scene.requestRender();
+      return;
+    }
     for (const position of positions) {
       if (position.orbitalObjectId === selectedId && trajectory) continue;
       const entity = viewer.entities.getById(
@@ -279,7 +409,27 @@ export function Globe({
     periodMinutes,
     objects,
     selected,
+    encounter,
   ]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    const C = window.Cesium;
+    if (!ready || !viewer || !C || !encounter) return;
+    const a = encounter.primaryPositionEcefMeters;
+    const b = encounter.secondaryPositionEcefMeters;
+    const location = C.Cartographic.fromCartesian(
+      new C.Cartesian3((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2),
+    );
+    viewer.camera.flyTo({
+      destination: C.Cartesian3.fromRadians(
+        location.longitude,
+        location.latitude,
+        Math.max(8_000_000, location.height * 2),
+      ),
+      duration: 1,
+    });
+  }, [ready, encounter, focusRequest]);
 
   function resetCamera() {
     const C = window.Cesium;
@@ -293,7 +443,24 @@ export function Globe({
   function focusSelected() {
     const viewer = viewerRef.current;
     const C = window.Cesium;
-    if (!viewer || !selectedId || !C) return;
+    if (!viewer || !C) return;
+    if (encounter) {
+      const a = encounter.primaryPositionEcefMeters;
+      const b = encounter.secondaryPositionEcefMeters;
+      const location = C.Cartographic.fromCartesian(
+        new C.Cartesian3((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2),
+      );
+      viewer.camera.flyTo({
+        destination: C.Cartesian3.fromRadians(
+          location.longitude,
+          location.latitude,
+          Math.max(8_000_000, location.height * 2),
+        ),
+        duration: 1,
+      });
+      return;
+    }
+    if (!selectedId) return;
     const position = viewer.entities
       .getById(`object:${selectedId}`)
       ?.position?.getValue(viewer.clock.currentTime);
@@ -333,9 +500,9 @@ export function Globe({
         </button>
         <button
           className="icon-button"
-          title="Focus selected object"
-          aria-label="Focus selected object"
-          disabled={!selected || !ready}
+          title={encounter ? "Focus encounter" : "Focus selected object"}
+          aria-label={encounter ? "Focus encounter" : "Focus selected object"}
+          disabled={(!selected && !encounter) || !ready}
           onClick={focusSelected}
         >
           <Icon name="crosshair" />

@@ -12,6 +12,7 @@ namespace OrbitalSentinel.Propagation;
 /// </summary>
 public sealed class Sgp4OrbitPropagator : IOrbitPropagator
 {
+    public const string Version = ConjunctionAlgorithms.PropagatorVersion;
     public const int MaximumPredictionPoints = 10_001;
     public static readonly TimeSpan MaximumPredictionHorizon = TimeSpan.FromHours(48);
 
@@ -19,6 +20,18 @@ public sealed class Sgp4OrbitPropagator : IOrbitPropagator
     {
         ValidateOrbit(orbit);
         return Propagate(CreateSatellite(orbit), orbit.Object.Id, timestampUtc.ToUniversalTime());
+    }
+
+    public IOrbitEvaluator CreateEvaluator(OrbitSnapshot orbit)
+    {
+        ValidateOrbit(orbit);
+        return new Evaluator(CreateSatellite(orbit), orbit.Object.Id);
+    }
+
+    private sealed class Evaluator(Satellite satellite, Guid objectId) : IOrbitEvaluator
+    {
+        public StateVector Evaluate(DateTimeOffset timestampUtc) =>
+            Propagate(satellite, objectId, timestampUtc.ToUniversalTime());
     }
 
     public Trajectory Predict(

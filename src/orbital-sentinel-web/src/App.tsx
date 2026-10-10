@@ -11,6 +11,11 @@ import {
 } from "./domain/orbits";
 import type { ObjectKind, OrbitSnapshot } from "./domain/orbits";
 import { useSelectedTrajectory, useTrafficData } from "./hooks/useTrafficData";
+import { useConjunctions } from "./hooks/useConjunctions";
+import {
+  ConjunctionDetails,
+  ConjunctionPanel,
+} from "./components/ConjunctionPanel";
 
 const emptyObjects: OrbitSnapshot[] = [];
 const filterOptions: Array<{ id: "all" | ObjectKind; label: string }> = [
@@ -28,6 +33,16 @@ export function App() {
   const [filter, setFilter] = useState<"all" | ObjectKind>("all");
   const [previewTime, setPreviewTime] = useState<number | null>(null);
   const [showTrajectory, setShowTrajectory] = useState(true);
+  const [workspace, setWorkspace] = useState<"catalog" | "conjunctions">(
+    "catalog",
+  );
+  const [focusRequest, setFocusRequest] = useState(0);
+  const conjunctions = useConjunctions(
+    workspace === "conjunctions",
+    data.revision,
+  );
+  const encounter =
+    workspace === "conjunctions" ? conjunctions.visualization : null;
   const about = useRef<HTMLDialogElement>(null);
   const privacy = useRef<HTMLDialogElement>(null);
   const objects = data.catalog.value?.items ?? emptyObjects;
@@ -37,8 +52,10 @@ export function App() {
     data.trajectoryUpdates[selectedId ?? ""] ?? 0,
     data.revision,
   );
-  const trajectory = trajectoryState.value;
-  const timestamp = previewTime ?? now;
+  const trajectory = encounter?.primaryTrajectory ?? trajectoryState.value;
+  const timestamp =
+    previewTime ??
+    (encounter ? Date.parse(encounter.timeOfClosestApproachUtc) : now);
   const predictionExpired =
     trajectory !== null && now > Date.parse(trajectory.endUtc);
   const currentPosition = trajectory
@@ -54,6 +71,9 @@ export function App() {
     return () => clearInterval(interval);
   }, []);
   useEffect(() => {
+    setPreviewTime(null);
+  }, [encounter?.assessmentId, workspace]);
+  useEffect(() => {
     if (
       objects.length &&
       !objects.some((item) => item.object.id === selectedId)
@@ -62,6 +82,7 @@ export function App() {
   }, [objects, selectedId]);
 
   function selectObject(id: string) {
+    setWorkspace("catalog");
     setSelectedId(id);
     setPreviewTime(null);
   }
@@ -197,145 +218,171 @@ export function App() {
           aria-label="Space traffic workspace"
         >
           <aside className="catalog-panel panel">
-            <div className="panel-heading">
-              <h2>Object catalog</h2>
-              <span className="count-badge">{objects.length}</span>
-            </div>
-            <div className="catalog-tools">
-              <label className="search-field">
-                <Icon name="search" size={16} />
-                <input
-                  aria-label="Search orbital objects"
-                  placeholder="Name or NORAD ID"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                />
-                {search && (
-                  <button
-                    aria-label="Clear search"
-                    onClick={() => setSearch("")}
-                  >
-                    ×
-                  </button>
-                )}
-              </label>
-              <div
-                className="filter-tabs"
-                role="group"
-                aria-label="Filter object type"
-              >
-                {filterOptions.map((option) => (
-                  <button
-                    key={option.id}
-                    className={filter === option.id ? "active" : ""}
-                    aria-pressed={filter === option.id}
-                    onClick={() => setFilter(option.id)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            </div>
             <div
-              className="catalog-list"
-              aria-label="Orbital objects"
-              aria-busy={data.catalog.loading}
+              className="workspace-tabs"
+              role="group"
+              aria-label="Workspace view"
             >
-              {data.catalog.loading && (
-                <div className="empty-state">
-                  <span className="loading-ring" />
-                  <h3>Loading catalog</h3>
-                  <p>Retrieving orbital elements from the service.</p>
+              <button
+                className={workspace === "catalog" ? "active" : ""}
+                aria-pressed={workspace === "catalog"}
+                onClick={() => setWorkspace("catalog")}
+              >
+                Object catalog
+              </button>
+              <button
+                className={workspace === "conjunctions" ? "active" : ""}
+                aria-pressed={workspace === "conjunctions"}
+                onClick={() => setWorkspace("conjunctions")}
+              >
+                Conjunctions
+              </button>
+            </div>
+            {workspace === "conjunctions" ? (
+              <ConjunctionPanel state={conjunctions} now={now} />
+            ) : (
+              <>
+                <div className="panel-heading">
+                  <h2>Object catalog</h2>
+                  <span className="count-badge">{objects.length}</span>
                 </div>
-              )}
-              {data.catalog.error && (
-                <div className="catalog-error" role="alert">
-                  <Icon name="info" />
-                  <div>
-                    <strong>
-                      {objects.length
-                        ? "Catalog refresh failed"
-                        : "Catalog unavailable"}
-                    </strong>
-                    <p>{data.catalog.error}</p>
-                    <button className="text-button" onClick={data.refresh}>
-                      Try again <Icon name="arrow" size={14} />
-                    </button>
-                  </div>
-                </div>
-              )}
-              {!data.catalog.loading &&
-                !data.catalog.error &&
-                objects.length === 0 && (
-                  <div className="empty-state">
-                    <Icon name="orbit" size={36} />
-                    <h3>Awaiting orbital data</h3>
-                    <p>
-                      Objects appear here after the first successful CelesTrak
-                      ingestion.
-                    </p>
-                  </div>
-                )}
-              {!data.catalog.loading &&
-                objects.length > 0 &&
-                filtered.length === 0 && (
-                  <div className="empty-state">
-                    <Icon name="search" size={28} />
-                    <h3>No matching objects</h3>
-                    <p>Try another name, identifier, or object type.</p>
-                    <button
-                      className="text-button"
-                      onClick={() => {
-                        setSearch("");
-                        setFilter("all");
-                      }}
-                    >
-                      Clear filters
-                    </button>
-                  </div>
-                )}
-              {filtered.map((item) => {
-                const kind = objectKind(item.object.objectType);
-                return (
-                  <button
-                    key={item.object.id}
-                    className={`object-row ${selectedId === item.object.id ? "selected" : ""}`}
-                    onClick={() => selectObject(item.object.id)}
-                    aria-pressed={selectedId === item.object.id}
+                <div className="catalog-tools">
+                  <label className="search-field">
+                    <Icon name="search" size={16} />
+                    <input
+                      aria-label="Search orbital objects"
+                      placeholder="Name or NORAD ID"
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                    />
+                    {search && (
+                      <button
+                        aria-label="Clear search"
+                        onClick={() => setSearch("")}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </label>
+                  <div
+                    className="filter-tabs"
+                    role="group"
+                    aria-label="Filter object type"
                   >
-                    <span className={`object-marker ${kind}`}>
-                      <Icon
-                        name={kind === "payload" ? "orbit" : "layers"}
-                        size={17}
-                      />
-                    </span>
-                    <span className="object-text">
-                      <strong>{item.object.name}</strong>
-                      <span>
-                        {item.object.noradCatalogId === null
-                          ? "No NORAD ID"
-                          : `NORAD ${item.object.noradCatalogId}`}
-                        <span className="text-dot">·</span>
-                        {kindLabel[kind]}
-                      </span>
-                    </span>
-                    <Icon name="chevron" size={13} />
-                  </button>
-                );
-              })}
-            </div>
-            <div className="catalog-footer">
-              <span>
-                {filtered.length} of {data.catalog.value?.totalCount ?? 0}{" "}
-                objects
-              </span>
-              <span>OMM source</span>
-            </div>
-            {(data.catalog.value?.totalCount ?? 0) > 200 && (
-              <p className="limit-note">
-                This view displays the first 200 objects. Search filters the
-                loaded catalog.
-              </p>
+                    {filterOptions.map((option) => (
+                      <button
+                        key={option.id}
+                        className={filter === option.id ? "active" : ""}
+                        aria-pressed={filter === option.id}
+                        onClick={() => setFilter(option.id)}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div
+                  className="catalog-list"
+                  aria-label="Orbital objects"
+                  aria-busy={data.catalog.loading}
+                >
+                  {data.catalog.loading && (
+                    <div className="empty-state">
+                      <span className="loading-ring" />
+                      <h3>Loading catalog</h3>
+                      <p>Retrieving orbital elements from the service.</p>
+                    </div>
+                  )}
+                  {data.catalog.error && (
+                    <div className="catalog-error" role="alert">
+                      <Icon name="info" />
+                      <div>
+                        <strong>
+                          {objects.length
+                            ? "Catalog refresh failed"
+                            : "Catalog unavailable"}
+                        </strong>
+                        <p>{data.catalog.error}</p>
+                        <button className="text-button" onClick={data.refresh}>
+                          Try again <Icon name="arrow" size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {!data.catalog.loading &&
+                    !data.catalog.error &&
+                    objects.length === 0 && (
+                      <div className="empty-state">
+                        <Icon name="orbit" size={36} />
+                        <h3>Awaiting orbital data</h3>
+                        <p>
+                          Objects appear here after the first successful
+                          CelesTrak ingestion.
+                        </p>
+                      </div>
+                    )}
+                  {!data.catalog.loading &&
+                    objects.length > 0 &&
+                    filtered.length === 0 && (
+                      <div className="empty-state">
+                        <Icon name="search" size={28} />
+                        <h3>No matching objects</h3>
+                        <p>Try another name, identifier, or object type.</p>
+                        <button
+                          className="text-button"
+                          onClick={() => {
+                            setSearch("");
+                            setFilter("all");
+                          }}
+                        >
+                          Clear filters
+                        </button>
+                      </div>
+                    )}
+                  {filtered.map((item) => {
+                    const kind = objectKind(item.object.objectType);
+                    return (
+                      <button
+                        key={item.object.id}
+                        className={`object-row ${selectedId === item.object.id ? "selected" : ""}`}
+                        onClick={() => selectObject(item.object.id)}
+                        aria-pressed={selectedId === item.object.id}
+                      >
+                        <span className={`object-marker ${kind}`}>
+                          <Icon
+                            name={kind === "payload" ? "orbit" : "layers"}
+                            size={17}
+                          />
+                        </span>
+                        <span className="object-text">
+                          <strong>{item.object.name}</strong>
+                          <span>
+                            {item.object.noradCatalogId === null
+                              ? "No NORAD ID"
+                              : `NORAD ${item.object.noradCatalogId}`}
+                            <span className="text-dot">·</span>
+                            {kindLabel[kind]}
+                          </span>
+                        </span>
+                        <Icon name="chevron" size={13} />
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="catalog-footer">
+                  <span>
+                    {filtered.length} of {data.catalog.value?.totalCount ?? 0}{" "}
+                    objects
+                  </span>
+                  <span>OMM source</span>
+                </div>
+                {(data.catalog.value?.totalCount ?? 0) > 200 && (
+                  <p className="limit-note">
+                    This view displays the first 200 objects. Search filters the
+                    loaded catalog.
+                  </p>
+                )}
+              </>
             )}
           </aside>
 
@@ -350,9 +397,11 @@ export function App() {
                   <span
                     className={`status-dot ${previewTime !== null ? "amber" : ""}`}
                   />
-                  {previewTime !== null
-                    ? "PREDICTION PREVIEW"
-                    : "CURRENT PREDICTION"}
+                  {encounter
+                    ? `${encounter.source.toUpperCase()} · ENCOUNTER PREVIEW`
+                    : previewTime !== null
+                      ? "PREDICTION PREVIEW"
+                      : "CURRENT PREDICTION"}
                 </span>
               </div>
               <span className="coordinate-label">EARTH-FIXED / METRES</span>
@@ -366,39 +415,68 @@ export function App() {
               preview={previewTime !== null}
               showTrajectory={showTrajectory}
               onSelect={selectObject}
+              encounter={encounter}
+              focusRequest={focusRequest}
             />
-            {positionError && (
+            {positionError && !encounter && (
               <div className="position-warning" role="status">
                 Position refresh failed. Samples older than 2 minutes are
                 hidden.
               </div>
             )}
             <div className="globe-legend">
-              <span>
-                <i className="legend-dot payload" />
-                Payload
-              </span>
-              <span>
-                <i className="legend-dot debris" />
-                Debris
-              </span>
-              <span>
-                <i className="legend-dot rocket" />
-                Rocket body
-              </span>
-              {objects.some(
-                (item) => objectKind(item.object.objectType) === "unknown",
-              ) && (
-                <span>
-                  <i className="legend-dot unknown" />
-                  Unclassified
-                </span>
+              {encounter ? (
+                <>
+                  <span>
+                    <i className="legend-dot payload" />
+                    Object A
+                  </span>
+                  <span>
+                    <i className="legend-dot secondary" />
+                    Object B
+                  </span>
+                  <span>
+                    <i className="legend-dot encounter" />
+                    Closest approach
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span>
+                    <i className="legend-dot payload" />
+                    Payload
+                  </span>
+                  <span>
+                    <i className="legend-dot debris" />
+                    Debris
+                  </span>
+                  <span>
+                    <i className="legend-dot rocket" />
+                    Rocket body
+                  </span>
+                  {objects.some(
+                    (item) => objectKind(item.object.objectType) === "unknown",
+                  ) && (
+                    <span>
+                      <i className="legend-dot unknown" />
+                      Unclassified
+                    </span>
+                  )}
+                </>
               )}
             </div>
             <div className="view-summary">
               <span>
-                {shownCount}{" "}
-                {previewTime !== null ? "selected object" : "position samples"}
+                {encounter ? (
+                  "2 objects · pinned assessment"
+                ) : (
+                  <>
+                    {shownCount}{" "}
+                    {previewTime !== null
+                      ? "selected object"
+                      : "position samples"}
+                  </>
+                )}
               </span>
               <span>Drag to rotate · scroll to zoom</span>
             </div>
@@ -406,21 +484,28 @@ export function App() {
               <div className="timeline-heading">
                 <span>
                   <Icon name="clock" size={15} />
-                  <strong>{formatUtc(timestamp)}</strong>
+                  <strong>{formatUtc(timestamp, Boolean(encounter))}</strong>
                   <span>UTC</span>
                 </span>
                 <button
                   className={`live-button ${previewTime === null ? "active" : ""}`}
-                  onClick={() => setPreviewTime(null)}
+                  onClick={() => {
+                    setPreviewTime(null);
+                    if (encounter) setFocusRequest((value) => value + 1);
+                  }}
                 >
                   <span className="status-dot" />
-                  Now
+                  {encounter ? "TCA" : "Now"}
                 </button>
               </div>
               <input
                 className="time-slider"
                 type="range"
-                aria-label="Preview selected object's predicted position in UTC"
+                aria-label={
+                  encounter
+                    ? "Preview encounter pair in UTC"
+                    : "Preview selected object's predicted position in UTC"
+                }
                 disabled={!trajectory}
                 min={trajectoryStart}
                 max={trajectoryEnd}
@@ -440,10 +525,11 @@ export function App() {
                     : "Prediction timeline"}
                 </span>
               </div>
-              {previewTime !== null && (
+              {(encounter || previewTime !== null) && (
                 <div className="preview-note">
-                  Preview shows the selected object only. Other objects return
-                  in Now mode.
+                  {encounter
+                    ? `${encounter.source === "Simulation" ? "Simulation · virtual time. " : ""}Both paths use this assessment’s original orbital data. The marker shows closest approach.`
+                    : "Preview shows the selected object only. Other objects return in Now mode."}
                 </div>
               )}
             </div>
@@ -451,179 +537,202 @@ export function App() {
 
           <aside
             className="details-panel panel"
-            aria-label="Selected object details"
+            aria-label={
+              workspace === "conjunctions"
+                ? "Selected encounter details"
+                : "Selected object details"
+            }
           >
-            <div className="panel-heading">
-              <h2>Object details</h2>
-              <Icon name="crosshair" size={17} />
-            </div>
-            {selected ? (
-              <>
-                <div className="selected-summary">
-                  <span
-                    className={`type-label ${objectKind(selected.object.objectType)}`}
-                  >
-                    {kindLabel[objectKind(selected.object.objectType)]}
-                  </span>
-                  <h2>{selected.object.name}</h2>
-                  <span className="selected-identifiers">
-                    {selected.object.internationalDesignator ??
-                      "No international designator"}
-                    <span className="text-dot">·</span>REAL DATA
-                  </span>
-                </div>
-                <dl className="detail-grid">
-                  <div>
-                    <dt>NORAD catalog ID</dt>
-                    <dd>{selected.object.noradCatalogId ?? "Not assigned"}</dd>
-                  </div>
-                  <div>
-                    <dt>Element revision</dt>
-                    <dd>v{selected.version}</dd>
-                  </div>
-                  <div>
-                    <dt>Inclination</dt>
-                    <dd>
-                      {selected.elements.inclinationDegrees.toFixed(2)}
-                      <span>°</span>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Orbital period</dt>
-                    <dd>
-                      {(
-                        1440 / selected.elements.meanMotionRevolutionsPerDay
-                      ).toFixed(1)}
-                      <span> min</span>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Eccentricity</dt>
-                    <dd>{selected.elements.eccentricity.toFixed(6)}</dd>
-                  </div>
-                  <div>
-                    <dt>Mean motion</dt>
-                    <dd>
-                      {selected.elements.meanMotionRevolutionsPerDay.toFixed(2)}
-                      <span> rev/d</span>
-                    </dd>
-                  </div>
-                </dl>
-                <div className="data-freshness">
-                  <div>
-                    <span>Element epoch</span>
-                    <span
-                      className={age?.stale ? "age-label stale" : "age-label"}
-                    >
-                      {age?.label}
-                    </span>
-                  </div>
-                  <strong>
-                    {formatUtc(selected.elements.epochUtc, true)} UTC
-                  </strong>
-                  <p>
-                    {age?.stale
-                      ? "Elements are over 48 hours old. Prediction accuracy may be reduced."
-                      : "Epoch is the reference time of the orbital elements, not the ingestion time."}
-                  </p>
-                </div>
-                <div className="prediction-section">
-                  <div className="subheading">
-                    <h3>Trajectory prediction</h3>
-                    <span className="small-tag">SGP4</span>
-                  </div>
-                  {trajectoryState.loading && (
-                    <p className="prediction-status">
-                      <span className="loading-ring small" />
-                      Loading prediction…
-                    </p>
-                  )}
-                  {trajectoryState.pending && (
-                    <div className="notice">
-                      <Icon name="clock" size={16} />
-                      <p>
-                        Prediction is being prepared. This view updates when
-                        processing completes.
-                      </p>
-                    </div>
-                  )}
-                  {trajectoryState.error && (
-                    <div className="notice warning" role="status">
-                      <Icon name="info" size={16} />
-                      <p>{trajectoryState.error}</p>
-                    </div>
-                  )}
-                  {trajectory && (
-                    <>
-                      <div className="prediction-meta">
-                        <div>
-                          <strong>
-                            {(
-                              (trajectoryEnd - trajectoryStart) /
-                              3_600_000
-                            ).toFixed(0)}
-                            <span> h</span>
-                          </strong>
-                          <span>Prediction window</span>
-                        </div>
-                        <div>
-                          <strong>
-                            {trajectory.stepSeconds}
-                            <span> s</span>
-                          </strong>
-                          <span>Sample interval</span>
-                        </div>
-                      </div>
-                      <label className="toggle-row">
-                        <span>
-                          <i className="line-swatch" />
-                          Show predicted path
-                        </span>
-                        <input
-                          type="checkbox"
-                          checked={showTrajectory}
-                          onChange={(event) =>
-                            setShowTrajectory(event.target.checked)
-                          }
-                        />
-                        <span className="toggle-track" aria-hidden="true" />
-                      </label>
-                      <p className="prediction-help">
-                        Path shows up to one orbit ahead (maximum 3 hours) in
-                        Earth-fixed coordinates.
-                      </p>
-                      {predictionExpired && (
-                        <p className="notice warning">
-                          The current prediction has expired. Awaiting fresh
-                          propagation.
-                        </p>
-                      )}
-                      {!currentPosition && !predictionExpired && (
-                        <p className="notice warning">
-                          The displayed time is outside this prediction. Use the
-                          timeline to inspect its available window.
-                        </p>
-                      )}
-                    </>
-                  )}
-                </div>
-                <div className="source-note">
-                  <Icon name="info" size={15} />
-                  <p>
-                    Public orbital elements and simplified frame conversion. For
-                    exploration and engineering demonstrations.
-                  </p>
-                </div>
-              </>
+            {workspace === "conjunctions" ? (
+              <ConjunctionDetails
+                state={conjunctions}
+                now={now}
+                onFocus={() => {
+                  setPreviewTime(null);
+                  setFocusRequest((value) => value + 1);
+                }}
+              />
             ) : (
-              <div className="empty-state details-empty">
-                <Icon name="crosshair" size={34} />
-                <h3>Your orbital perspective</h3>
-                <p>
-                  Select an object from the catalog or globe to inspect its
-                  elements and predicted path.
-                </p>
-              </div>
+              <>
+                <div className="panel-heading">
+                  <h2>Object details</h2>
+                  <Icon name="crosshair" size={17} />
+                </div>
+                {selected ? (
+                  <>
+                    <div className="selected-summary">
+                      <span
+                        className={`type-label ${objectKind(selected.object.objectType)}`}
+                      >
+                        {kindLabel[objectKind(selected.object.objectType)]}
+                      </span>
+                      <h2>{selected.object.name}</h2>
+                      <span className="selected-identifiers">
+                        {selected.object.internationalDesignator ??
+                          "No international designator"}
+                        <span className="text-dot">·</span>REAL DATA
+                      </span>
+                    </div>
+                    <dl className="detail-grid">
+                      <div>
+                        <dt>NORAD catalog ID</dt>
+                        <dd>
+                          {selected.object.noradCatalogId ?? "Not assigned"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Element revision</dt>
+                        <dd>v{selected.version}</dd>
+                      </div>
+                      <div>
+                        <dt>Inclination</dt>
+                        <dd>
+                          {selected.elements.inclinationDegrees.toFixed(2)}
+                          <span>°</span>
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Orbital period</dt>
+                        <dd>
+                          {(
+                            1440 / selected.elements.meanMotionRevolutionsPerDay
+                          ).toFixed(1)}
+                          <span> min</span>
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Eccentricity</dt>
+                        <dd>{selected.elements.eccentricity.toFixed(6)}</dd>
+                      </div>
+                      <div>
+                        <dt>Mean motion</dt>
+                        <dd>
+                          {selected.elements.meanMotionRevolutionsPerDay.toFixed(
+                            2,
+                          )}
+                          <span> rev/d</span>
+                        </dd>
+                      </div>
+                    </dl>
+                    <div className="data-freshness">
+                      <div>
+                        <span>Element epoch</span>
+                        <span
+                          className={
+                            age?.stale ? "age-label stale" : "age-label"
+                          }
+                        >
+                          {age?.label}
+                        </span>
+                      </div>
+                      <strong>
+                        {formatUtc(selected.elements.epochUtc, true)} UTC
+                      </strong>
+                      <p>
+                        {age?.stale
+                          ? "Elements are over 48 hours old. Prediction accuracy may be reduced."
+                          : "Epoch is the reference time of the orbital elements, not the ingestion time."}
+                      </p>
+                    </div>
+                    <div className="prediction-section">
+                      <div className="subheading">
+                        <h3>Trajectory prediction</h3>
+                        <span className="small-tag">SGP4</span>
+                      </div>
+                      {trajectoryState.loading && (
+                        <p className="prediction-status">
+                          <span className="loading-ring small" />
+                          Loading prediction…
+                        </p>
+                      )}
+                      {trajectoryState.pending && (
+                        <div className="notice">
+                          <Icon name="clock" size={16} />
+                          <p>
+                            Prediction is being prepared. This view updates when
+                            processing completes.
+                          </p>
+                        </div>
+                      )}
+                      {trajectoryState.error && (
+                        <div className="notice warning" role="status">
+                          <Icon name="info" size={16} />
+                          <p>{trajectoryState.error}</p>
+                        </div>
+                      )}
+                      {trajectory && (
+                        <>
+                          <div className="prediction-meta">
+                            <div>
+                              <strong>
+                                {(
+                                  (trajectoryEnd - trajectoryStart) /
+                                  3_600_000
+                                ).toFixed(0)}
+                                <span> h</span>
+                              </strong>
+                              <span>Prediction window</span>
+                            </div>
+                            <div>
+                              <strong>
+                                {trajectory.stepSeconds}
+                                <span> s</span>
+                              </strong>
+                              <span>Sample interval</span>
+                            </div>
+                          </div>
+                          <label className="toggle-row">
+                            <span>
+                              <i className="line-swatch" />
+                              Show predicted path
+                            </span>
+                            <input
+                              type="checkbox"
+                              checked={showTrajectory}
+                              onChange={(event) =>
+                                setShowTrajectory(event.target.checked)
+                              }
+                            />
+                            <span className="toggle-track" aria-hidden="true" />
+                          </label>
+                          <p className="prediction-help">
+                            Path shows up to one orbit ahead (maximum 3 hours)
+                            in Earth-fixed coordinates.
+                          </p>
+                          {predictionExpired && (
+                            <p className="notice warning">
+                              The current prediction has expired. Awaiting fresh
+                              propagation.
+                            </p>
+                          )}
+                          {!currentPosition && !predictionExpired && (
+                            <p className="notice warning">
+                              The displayed time is outside this prediction. Use
+                              the timeline to inspect its available window.
+                            </p>
+                          )}
+                        </>
+                      )}
+                    </div>
+                    <div className="source-note">
+                      <Icon name="info" size={15} />
+                      <p>
+                        Public orbital elements and simplified frame conversion.
+                        For exploration and engineering demonstrations.
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <div className="empty-state details-empty">
+                    <Icon name="crosshair" size={34} />
+                    <h3>Your orbital perspective</h3>
+                    <p>
+                      Select an object from the catalog or globe to inspect its
+                      elements and predicted path.
+                    </p>
+                  </div>
+                )}
+              </>
             )}
           </aside>
         </section>
@@ -682,7 +791,7 @@ export function App() {
             aria-label="Close About"
             onClick={() => about.current?.close()}
           >
-            ×
+            <Icon name="close" size={18} />
           </button>
         </div>
         <div className="notes-body">
@@ -718,20 +827,21 @@ export function App() {
             hides the rest of the catalog so positions from different times are
             not presented as a shared scene.
           </p>
-          <h3>A deliberate first increment</h3>
+          <h3>Predicted close approaches</h3>
           <p>
-            Catalog ingestion, asynchronous propagation, and visualization are
-            implemented. Conjunction detection, explainable risk assessment,
-            history, alerts, deterministic scenarios, and simplified manoeuvres
-            are future increments. No conjunction or risk numbers are fabricated
-            in this view.
+            Conjunction screening compares coherent prediction runs and refines
+            close approaches between trajectory samples. Assessments retain
+            their original orbital data and history. The clearly labelled
+            simulation uses a fixed virtual clock and stays separate from real
+            catalog data. Risk assessment, alerts, and manoeuvres remain future
+            work.
           </p>
-          <h3>Scientific limitations</h3>
+          <h3>Limitations</h3>
           <p>
             Public general-perturbation elements have limited accuracy.
             Prediction quality degrades with element age. This demonstrator has
             no operational uncertainty model and must not be used for spacecraft
-            collision-avoidance decisions.
+            collision-avoidance decisions. Obviously.
           </p>
           <a
             href="https://celestrak.org/NORAD/documentation/gp-data-formats.php"
@@ -761,7 +871,7 @@ export function App() {
             aria-label="Close Privacy"
             onClick={() => privacy.current?.close()}
           >
-            ×
+            <Icon name="close" size={18} />
           </button>
         </div>
         <div className="notes-body">

@@ -21,15 +21,17 @@ public sealed class PersistenceTests(PostgresFixture fixture) : IAsyncLifetime
     {
         await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => new DatabaseMigrator(fixture.DataSource).MigrateAsync()));
         await using var connection = await fixture.DataSource.OpenConnectionAsync();
-        var checksum = await connection.QuerySingleAsync<string>("SELECT checksum FROM schema_migrations;");
-        await connection.ExecuteAsync("UPDATE schema_migrations SET checksum='tampered';");
+        var migration = await connection.QueryFirstAsync<(string Name, string Checksum)>(
+            "SELECT name,checksum FROM schema_migrations ORDER BY name;");
+        await connection.ExecuteAsync("UPDATE schema_migrations SET checksum='tampered' WHERE name=@Name;", new { migration.Name });
         try
         {
             await Assert.ThrowsAsync<InvalidOperationException>(() => new DatabaseMigrator(fixture.DataSource).MigrateAsync());
         }
         finally
         {
-            await connection.ExecuteAsync("UPDATE schema_migrations SET checksum=@checksum;", new { checksum });
+            await connection.ExecuteAsync("UPDATE schema_migrations SET checksum=@Checksum WHERE name=@Name;",
+                new { migration.Name, migration.Checksum });
         }
         await new DatabaseMigrator(fixture.DataSource).MigrateAsync();
     }
