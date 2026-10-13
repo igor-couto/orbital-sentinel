@@ -9,10 +9,12 @@ public sealed record StateVector(
     CartesianVector VelocityKmPerSecond);
 
 /// <summary>
-/// Position only, in approximate Earth-fixed coordinates and meters for globe rendering.
+/// Position in approximate Earth-fixed coordinates and meters for globe rendering,
+/// plus WGS84 altitude and the magnitude of the original SGP4 TEME velocity.
 /// The GMST rotation assumes UT1 = UTC and neglects polar motion; this is not precise ITRF.
 /// </summary>
-public sealed record VisualizationPoint(DateTimeOffset TimestampUtc, CartesianVector PositionEcefMeters);
+public sealed record VisualizationPoint(DateTimeOffset TimestampUtc, CartesianVector PositionEcefMeters,
+    double? AltitudeKilometers = null, double? SpeedKilometersPerSecond = null);
 
 /// <summary>A bounded set of visualization samples, including both requested endpoints.</summary>
 public sealed record Trajectory(

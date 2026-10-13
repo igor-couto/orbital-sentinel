@@ -27,7 +27,7 @@ npm run build
 - `src/hooks` owns polling, request cleanup, and stable SignalR notifications. Catalog polling runs once per minute; the compact positions endpoint runs every 15 seconds. The selected object's trajectory is the only full trajectory downloaded. Requests do not overlap for a resource; canceled or superseded requests cannot replace newer results.
 - `src/components/Globe.tsx` owns Cesium lifecycle and rendering. Backend `positionEcefMeters` values enter `Cartesian3` directly as metres in `ReferenceFrame.FIXED`.
 
-The UI loads the first 200 catalog entries, matching the initial 50–200 object scope. Search and type filters apply to that loaded set, with an explicit message if the total exceeds 200. Unknown source classifications remain **Unclassified**; the client does not guess object type from a name.
+The UI loads the first 500 catalog entries, matching the configured catalog limit. Search and type filters apply to that loaded set, with an explicit message if the total exceeds 500. The backend uses the supplied object type, or clear CelesTrak `DEB`/`R/B` name markers when that field is absent. Ambiguous names remain **Unclassified**. The client recognizes the full type labels and SATCAT codes `PAY`, `R/B`, `DEB`, and `UNK`; it does not make additional guesses from names. Filters, globe colors, and detail labels use the same classification.
 
 The API's frame is an approximate Earth-fixed representation derived from TEME by the backend. It is not precise ITRF. Cesium renders these coordinates against its WGS84 globe. The frontend does not interpret TEME vectors as latitude/longitude.
 
@@ -37,7 +37,7 @@ The API's frame is an approximate Earth-fixed representation derived from TEME b
 
 The timeline previews the selected object's entire prediction window. While previewing, other catalog markers are hidden so samples from different times are not presented as a shared scene. The Earth-fixed path shows up to one orbital period ahead, capped at three hours to keep it readable. This path is a visualization of sampled future Earth-fixed positions, not a closed inertial Keplerian orbit.
 
-An epoch older than 48 hours gets an age warning. This is a UI freshness threshold, **not an accuracy guarantee**. Public general-perturbation elements and linear visualization interpolation cannot support operational conjunction assessment. Conjunctions, risk levels, history, alerts, and manoeuvre simulations are planned increments; no invented values are displayed for them.
+An epoch older than 48 hours gets an age warning. This is a UI freshness threshold, **not an accuracy guarantee**. Public general-perturbation elements and linear visualization interpolation cannot support operational conjunction assessment. The Conjunctions tab displays backend-computed closest approaches and immutable assessment history. Selecting an encounter displays both original-version trajectories with exact TCA samples and a closest-approach marker. The Create simulation dialog starts a separate deterministic scenario with an explicitly paused virtual clock. Real and simulation sources remain separate. Risk classification, collision probability, alerts, and avoidance manoeuvres are not implemented.
 
 ## Delivery and reliability
 

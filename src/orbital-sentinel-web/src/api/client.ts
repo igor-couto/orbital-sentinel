@@ -32,7 +32,15 @@ function validPoint(value: unknown): boolean {
   )
     return false;
   const position = value.positionEcefMeters;
-  return ["x", "y", "z"].every((axis) => isNumber(position[axis]));
+  return (
+    ["x", "y", "z"].every((axis) => isNumber(position[axis])) &&
+    ["altitudeKilometers", "speedKilometersPerSecond"].every(
+      (key) =>
+        value[key] === undefined || value[key] === null || isNumber(value[key]),
+    ) &&
+    (value.speedKilometersPerSecond == null ||
+      (value.speedKilometersPerSecond as number) >= 0)
+  );
 }
 
 export function parseCatalog(value: unknown): CatalogPage {

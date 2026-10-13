@@ -19,6 +19,17 @@ public static class RuntimeServices
         services.AddSingleton(NpgsqlDataSource.Create(connectionString));
         services.AddSingleton<DatabaseMigrator>();
         services.AddSingleton<CatalogRepository>();
+        services.AddSingleton<CatalogMetadataRepository>();
+        services.AddOptions<SatelliteCatalogOptions>().Bind(configuration.GetSection("SatelliteCatalog"))
+            .Validate(x => x.RequestIntervalMinutes >= 120, "SATCAT polling must be at least 120 minutes apart.")
+            .Validate(x => Uri.TryCreate(x.BaseUrl, UriKind.Absolute, out var uri) && uri.Scheme == "https"
+                && string.IsNullOrEmpty(uri.Query), "Use an HTTPS SATCAT URL without a query string.")
+            .ValidateOnStart();
+        services.AddHttpClient<SatelliteCatalogClient>(client =>
+        {
+            client.Timeout = Timeout.InfiniteTimeSpan;
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("OrbitalSentinel/0.1 (educational-orbit-viewer)");
+        });
         services.AddSingleton<TrajectoryRepository>();
         services.AddSingleton<OutboxRepository>();
         services.AddSingleton<ConsumerFailureRepository>();

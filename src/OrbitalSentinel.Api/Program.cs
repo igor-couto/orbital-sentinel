@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
 using OrbitalSentinel.Api;
+using OrbitalSentinel.Core;
 using OrbitalSentinel.Infrastructure;
 using OrbitalSentinel.Runtime;
 
@@ -82,6 +83,21 @@ api.MapGet("/orbital-objects/positions", async (TrajectoryRepository trajectorie
 api.MapGet("/orbital-objects/{id:guid}", async (Guid id, CatalogRepository catalog, CancellationToken ct) =>
     await catalog.GetAsync(id, ct) is { } orbit ? Results.Ok(orbit) : Results.Problem(statusCode: 404, title: "Orbital object not found."))
     .WithName("GetOrbitalObject");
+
+api.MapGet("/orbital-objects/{id:guid}/details", async (Guid id, CatalogRepository catalog,
+    CatalogMetadataRepository metadata, HttpContext context, CancellationToken ct) =>
+{
+    var orbit = await catalog.GetAsync(id, ct);
+    if (orbit is null) return Results.Problem(statusCode: 404, title: "Orbital object not found.");
+    var record = orbit.Object.NoradCatalogId is { } norad ? await metadata.GetAsync(norad, ct) : null;
+    context.Response.Headers.CacheControl = "private, max-age=60";
+    return Results.Ok(new
+    {
+        orbitalObjectId = id, orbitVersion = orbit.Version,
+        meanOrbit = OrbitDisplayGeometry.MeanShape(orbit.Elements), metadata = record,
+        elementsSource = "CelesTrak GP (OMM)"
+    });
+}).WithName("GetObjectDetails");
 
 api.MapGet("/orbital-objects/{id:guid}/trajectory", async (Guid id, CatalogRepository catalog, TrajectoryRepository trajectories,
     HttpContext context, CancellationToken ct) =>

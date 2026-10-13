@@ -1,8 +1,8 @@
+import { ObjectFacts } from "./components/ObjectFacts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Globe } from "./components/Globe";
 import { Icon } from "./components/Icon";
 import {
-  elementAge,
   formatUtc,
   interpolatePosition,
   isCurrentPosition,
@@ -102,7 +102,6 @@ export function App() {
       }),
     [objects, search, filter],
   );
-  const age = selected ? elementAge(selected.elements.epochUtc, now) : null;
   const connectionLabel = {
     connecting: "Connecting",
     live: "Updates connected",
@@ -560,80 +559,13 @@ export function App() {
                 </div>
                 {selected ? (
                   <>
-                    <div className="selected-summary">
-                      <span
-                        className={`type-label ${objectKind(selected.object.objectType)}`}
-                      >
-                        {kindLabel[objectKind(selected.object.objectType)]}
-                      </span>
-                      <h2>{selected.object.name}</h2>
-                      <span className="selected-identifiers">
-                        {selected.object.internationalDesignator ??
-                          "No international designator"}
-                        <span className="text-dot">·</span>REAL DATA
-                      </span>
-                    </div>
-                    <dl className="detail-grid">
-                      <div>
-                        <dt>NORAD catalog ID</dt>
-                        <dd>
-                          {selected.object.noradCatalogId ?? "Not assigned"}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>Element revision</dt>
-                        <dd>v{selected.version}</dd>
-                      </div>
-                      <div>
-                        <dt>Inclination</dt>
-                        <dd>
-                          {selected.elements.inclinationDegrees.toFixed(2)}
-                          <span>°</span>
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>Orbital period</dt>
-                        <dd>
-                          {(
-                            1440 / selected.elements.meanMotionRevolutionsPerDay
-                          ).toFixed(1)}
-                          <span> min</span>
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>Eccentricity</dt>
-                        <dd>{selected.elements.eccentricity.toFixed(6)}</dd>
-                      </div>
-                      <div>
-                        <dt>Mean motion</dt>
-                        <dd>
-                          {selected.elements.meanMotionRevolutionsPerDay.toFixed(
-                            2,
-                          )}
-                          <span> rev/d</span>
-                        </dd>
-                      </div>
-                    </dl>
-                    <div className="data-freshness">
-                      <div>
-                        <span>Element epoch</span>
-                        <span
-                          className={
-                            age?.stale ? "age-label stale" : "age-label"
-                          }
-                        >
-                          {age?.label}
-                        </span>
-                      </div>
-                      <strong>
-                        {formatUtc(selected.elements.epochUtc, true)} UTC
-                      </strong>
-                      <p>
-                        {age?.stale
-                          ? "Elements are over 48 hours old. Prediction accuracy may be reduced."
-                          : "Epoch is the reference time of the orbital elements, not the ingestion time."}
-                      </p>
-                    </div>
+                    <ObjectFacts
+                      orbit={selected}
+                      trajectory={trajectory}
+                      timestamp={timestamp}
+                      now={now}
+                      revision={data.revision}
+                    />
                     <div className="prediction-section">
                       <div className="subheading">
                         <h3>Trajectory prediction</h3>

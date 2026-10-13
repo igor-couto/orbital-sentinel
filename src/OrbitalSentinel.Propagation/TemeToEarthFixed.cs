@@ -17,10 +17,14 @@ public static class TemeToEarthFixed
         var (sin, cos) = Math.SinCos(theta);
         var position = state.PositionKm;
 
+        var velocity = state.VelocityKmPerSecond;
+        // Speed remains the magnitude of the SGP4 TEME velocity, not Earth-relative ground speed.
+        var speed = Math.Sqrt(velocity.X * velocity.X + velocity.Y * velocity.Y + velocity.Z * velocity.Z);
+        // Geodetic height is invariant under the rotation about Earth's polar axis.
         return new VisualizationPoint(state.TimestampUtc.ToUniversalTime(), new CartesianVector(
             1000 * (cos * position.X + sin * position.Y),
             1000 * (-sin * position.X + cos * position.Y),
-            1000 * position.Z));
+            1000 * position.Z), OrbitDisplayGeometry.AltitudeKilometers(position), speed);
     }
 
     public static double GreenwichMeanSiderealTimeRadians(DateTimeOffset timestampUtc)

@@ -9,10 +9,16 @@ public sealed class CatalogRepository(NpgsqlDataSource dataSource)
 {
     private const string SelectSnapshot = """
         SELECT o.id AS Id, o.norad_catalog_id AS NoradCatalogId, o.name AS Name,
-               o.international_designator AS InternationalDesignator, o.object_type AS ObjectType,
+               o.international_designator AS InternationalDesignator,
+               CASE WHEN o.object_type IN ('Unknown','UNK') AND m.object_type IN ('PAY','R/B','DEB')
+                    THEN m.object_type ELSE o.object_type END AS ObjectType,
                o.updated_at AS UpdatedAt, e.version AS Version, e.elements::text AS Elements,
                e.fingerprint AS Fingerprint, e.ingested_at AS IngestedAt
         FROM orbital_objects o JOIN orbital_element_sets e ON e.orbital_object_id = o.id
+        LEFT JOIN LATERAL (
+            SELECT payload->>'OBJECT_TYPE' AS object_type FROM catalog_metadata
+            WHERE norad_catalog_id=o.norad_catalog_id ORDER BY retrieved_at DESC,group_name LIMIT 1
+        ) m ON true
         """;
 
     public async Task<bool> UpsertAsync(CatalogImport import, CancellationToken cancellationToken = default)
@@ -112,7 +118,8 @@ public sealed class CatalogRepository(NpgsqlDataSource dataSource)
         var objects = await connection.QueryAsync<RefreshRow>(new CommandDefinition("""
             SELECT o.id AS Id, o.current_version AS Version FROM orbital_objects o
             LEFT JOIN trajectory_predictions t ON t.orbital_object_id=o.id
-            WHERE (t.orbital_object_id IS NULL OR t.end_utc < @beforeUtc OR t.orbit_version < o.current_version)
+            WHERE (t.orbital_object_id IS NULL OR t.end_utc < @beforeUtc OR t.orbit_version < o.current_version
+                OR t.payload->'points'->0->>'speedKilometersPerSecond' IS NULL)
             ORDER BY o.id FOR UPDATE OF o;
             """, new { beforeUtc = beforeUtc.ToUniversalTime() }, transaction, cancellationToken: cancellationToken));
         var count = 0;

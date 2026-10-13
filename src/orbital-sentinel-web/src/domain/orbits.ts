@@ -43,6 +43,8 @@ export interface EcefPosition {
 export interface TrajectoryPoint {
   timestampUtc: string;
   positionEcefMeters: EcefPosition;
+  altitudeKilometers?: number | null;
+  speedKilometersPerSecond?: number | null;
 }
 export interface ObjectPosition extends TrajectoryPoint {
   orbitalObjectId: string;

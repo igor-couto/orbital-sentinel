@@ -7,6 +7,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Logging.AddJsonConsole(options => options.IncludeScopes = true);
 builder.Services.AddOrbitalRuntime(builder.Configuration);
 builder.Services.AddHostedService<IngestionWorker>();
+builder.Services.AddHostedService<CatalogMetadataWorker>();
 builder.Services.AddHostedService<OutboxPublisher>();
 builder.Services.AddHostedService<PropagationWorker>();
 builder.Services.AddHostedService<PredictionRunCoordinator>();

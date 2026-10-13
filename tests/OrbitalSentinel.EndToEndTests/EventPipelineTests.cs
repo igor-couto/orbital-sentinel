@@ -112,6 +112,13 @@ public sealed class EventPipelineTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health/ready")).StatusCode);
         var returned = await client.GetFromJsonAsync<Trajectory>($"/api/orbital-objects/{id}/trajectory");
         Assert.Equal(id, returned!.OrbitalObjectId);
+        Assert.All(returned.Points, point => Assert.InRange(point.SpeedKilometersPerSecond!.Value, 7, 8));
+        var details = await client.GetFromJsonAsync<JsonElement>($"/api/orbital-objects/{id}/details");
+        Assert.Equal(id, details.GetProperty("orbitalObjectId").GetGuid());
+        Assert.Equal(trajectory.OrbitVersion, details.GetProperty("orbitVersion").GetInt64());
+        Assert.Equal(JsonValueKind.Null, details.GetProperty("metadata").ValueKind);
+        Assert.InRange(details.GetProperty("meanOrbit").GetProperty("perigeeKilometers").GetDouble(), 400, 430);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/orbital-objects/{Guid.NewGuid()}/details")).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/api/orbital-objects?pageSize=999")).StatusCode);
         var notFound = await client.GetAsync($"/api/orbital-objects/{Guid.NewGuid()}");
         Assert.Equal(HttpStatusCode.NotFound, notFound.StatusCode);
