@@ -13,6 +13,7 @@ import type {
 } from "../domain/orbits";
 import { Icon } from "./Icon";
 import type { ConjunctionVisualization } from "../domain/conjunctions";
+import { reconcileGlobeEntities } from "./globeEntities";
 
 declare global {
   interface Window {
@@ -159,8 +160,9 @@ export function Globe({
     const C = window.Cesium;
     if (!ready || !viewer || !C) return;
     const lookup = new Map(objects.map((item) => [item.object.id, item]));
-    viewer.entities.suspendEvents();
-    viewer.entities.removeAll();
+    const entities: Cesium.Entity[] = [];
+    const add = (options: Cesium.Entity.ConstructorOptions) =>
+      entities.push(new C.Entity(options));
     if (encounter) {
       const tca = Date.parse(encounter.timeOfClosestApproachUtc);
       const pair = [
@@ -192,7 +194,7 @@ export function Globe({
               point.positionEcefMeters.z,
             ),
           );
-        viewer.entities.add({
+        add({
           id: `encounter-object:${member.orbit.object.id}`,
           name: member.orbit.object.name,
           position: sampled,
@@ -219,7 +221,7 @@ export function Globe({
           },
         });
         // A focused arc around TCA keeps the crossing readable without drawing 24h of loops.
-        viewer.entities.add({
+        add({
           id: `encounter-path:${member.label}`,
           polyline: {
             positions: member.path.points
@@ -243,7 +245,7 @@ export function Globe({
       }
       const a = encounter.primaryPositionEcefMeters;
       const b = encounter.secondaryPositionEcefMeters;
-      viewer.entities.add({
+      add({
         id: "encounter-tca",
         position: new C.Cartesian3(
           (a.x + b.x) / 2,
@@ -266,7 +268,7 @@ export function Globe({
           backgroundPadding: new C.Cartesian2(8, 5),
         },
       });
-      viewer.entities.add({
+      add({
         id: "encounter-separation",
         polyline: {
           positions: [
@@ -278,7 +280,7 @@ export function Globe({
           material: C.Color.WHITE,
         },
       });
-      viewer.entities.resumeEvents();
+      reconcileGlobeEntities(viewer.entities, entities);
       viewer.scene.requestRender();
       return;
     }
@@ -290,7 +292,7 @@ export function Globe({
       const color = C.Color.fromCssColorString(
         kindColor[objectKind(orbit.object.objectType)],
       );
-      viewer.entities.add({
+      add({
         id: `object:${position.orbitalObjectId}`,
         name: orbit.object.name,
         position: new C.Cartesian3(x, y, z),
@@ -316,7 +318,7 @@ export function Globe({
           new C.Cartesian3(x, y, z),
         );
       }
-      viewer.entities.add({
+      add({
         id: `object:${selected.object.id}`,
         name: selected.object.name,
         position: sampled,
@@ -342,7 +344,7 @@ export function Globe({
           scale: 1,
         },
       });
-      viewer.entities.add({
+      add({
         id: "prediction-path",
         polyline: {
           positions: [],
@@ -352,7 +354,7 @@ export function Globe({
         },
       });
     }
-    viewer.entities.resumeEvents();
+    reconcileGlobeEntities(viewer.entities, entities);
     viewer.scene.requestRender();
   }, [ready, objects, positions, selected, selectedId, trajectory, encounter]);
 
