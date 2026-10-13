@@ -376,9 +376,9 @@ export function App() {
                   </span>
                   <span>OMM source</span>
                 </div>
-                {(data.catalog.value?.totalCount ?? 0) > 200 && (
+                {(data.catalog.value?.totalCount ?? 0) > 500 && (
                   <p className="limit-note">
-                    This view displays the first 200 objects. Search filters the
+                    This view displays the first 500 objects. Search filters the
                     loaded catalog.
                   </p>
                 )}

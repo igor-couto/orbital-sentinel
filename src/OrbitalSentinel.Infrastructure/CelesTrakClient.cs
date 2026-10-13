@@ -12,7 +12,7 @@ public sealed class CelesTrakOptions
 {
     public string BaseUrl { get; set; } = "https://celestrak.org/NORAD/elements/gp.php";
     public string[] Groups { get; set; } = ["stations", "visual", "iridium-33-debris"];
-    public int MaxObjects { get; set; } = 150;
+    public int MaxObjects { get; set; } = 500;
     public int TimeoutSeconds { get; set; } = 30;
     public int MaxRetries { get; set; } = 2;
     public int RequestIntervalMinutes { get; set; } = 120;
@@ -36,11 +36,11 @@ public sealed class CelesTrakClient
         this.logger = logger;
         if (!Uri.TryCreate(this.options.BaseUrl, UriKind.Absolute, out var uri)
             || uri.Scheme is not ("http" or "https") || !string.IsNullOrEmpty(uri.Query)
-            || this.options.MaxObjects is < 1 or > 200 || this.options.TimeoutSeconds is < 1 or > 120
+            || this.options.MaxObjects is < 1 or > 500 || this.options.TimeoutSeconds is < 1 or > 120
             || this.options.MaxRetries is < 0 or > 3 || this.options.RequestIntervalMinutes < 120
             || this.options.Groups.Length is < 1 or > 5
             || this.options.Groups.Any(string.IsNullOrWhiteSpace))
-            throw new ArgumentException("Invalid CelesTrak configuration: use 1..200 objects, 1..5 groups, finite retries and a >=120 minute poll interval.", nameof(options));
+            throw new ArgumentException("Invalid CelesTrak configuration: use 1..500 objects, 1..5 groups, finite retries and a >=120 minute poll interval.", nameof(options));
     }
 
     public async Task<IReadOnlyList<CatalogImport>> FetchAsync(CancellationToken cancellationToken = default)

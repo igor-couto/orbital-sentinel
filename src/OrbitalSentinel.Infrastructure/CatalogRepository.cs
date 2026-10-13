@@ -74,7 +74,7 @@ public sealed class CatalogRepository(NpgsqlDataSource dataSource)
     public async Task<Page<OrbitSnapshot>> ListAsync(int page, int pageSize, string? search,
         CancellationToken cancellationToken = default)
     {
-        if (page < 1 || page > 1_000_000 || pageSize is < 1 or > 200)
+        if (page < 1 || page > 1_000_000 || pageSize is < 1 or > 500)
             throw new ArgumentOutOfRangeException(nameof(page), "Page must be 1..1000000 and page size 1..200.");
         const string filter = " WHERE (@search IS NULL OR o.name ILIKE @pattern OR o.norad_catalog_id::text = @search)";
         var parameters = new { search, pattern = $"%{search}%", offset = (page - 1) * pageSize, pageSize };

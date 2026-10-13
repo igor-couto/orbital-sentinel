@@ -70,8 +70,8 @@ api.MapGet("/orbital-objects", async (CatalogRepository catalog, int? page, int?
 {
     var pageNumber = page ?? 1;
     var size = pageSize ?? 50;
-    if (pageNumber is < 1 or > 10000 || size is < 1 or > 200 || search?.Length > 100)
-        return Results.Problem(statusCode: 400, title: "Use page 1–10000, pageSize 1–200, and a search of at most 100 characters.");
+    if (pageNumber is < 1 or > 10000 || size is < 1 or > 500 || search?.Length > 100)
+        return Results.Problem(statusCode: 400, title: "Use page 1–10000, pageSize 1–500, and a search of at most 100 characters.");
     return Results.Ok(await catalog.ListAsync(pageNumber, size, search?.Trim(), ct));
 }).WithName("ListOrbitalObjects");
 

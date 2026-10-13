@@ -15,7 +15,7 @@ This is an engineering demonstrator, **not a system for operational spacecraft d
 
 ## What works
 
-- OMM-compatible JSON from CelesTrak, validated through a separate external DTO, with a bounded 150-object selection.
+- OMM-compatible JSON from CelesTrak, validated through a separate external DTO, with a bounded 500-object selection.
 - Internal UUID identities; optional NORAD IDs remain external identifiers. Orbital elements are immutable revisions, detected using a canonical fingerprint of every dynamical field.
 - Transactional state + outbox writes, concurrent publication leases, per-object ordering, finite publication attempts, durable quarantine, and atomic consumer inbox + trajectory + outgoing-event writes.
 - Kafka-driven SGP4 predictions: default 24-hour horizon at 60-second intervals, including position and velocity at a requested instant through the propagation abstraction.
@@ -138,7 +138,7 @@ Strongly typed options validate on startup. Standard .NET environment variables 
 | `ConnectionStrings__Postgres` | Required outside Compose; no application-source secret |
 | `CelesTrak__BaseUrl` | `https://celestrak.org/NORAD/elements/gp.php` |
 | `CelesTrak__Groups__0` etc. | `stations`, `visual`, `iridium-33-debris` |
-| `CelesTrak__MaxObjects` | 150 per cycle; configurable 1–200 |
+| `CelesTrak__MaxObjects` | 500 per cycle; configurable 1–500 |
 | `CelesTrak__RequestIntervalMinutes` | 120 minimum |
 | `CelesTrak__TimeoutSeconds` | 20 in worker settings |
 | `CelesTrak__MaxRetries` | 2, after the original HTTP attempt |

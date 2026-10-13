@@ -181,7 +181,7 @@ async function readJson(response: Response): Promise<unknown> {
 
 export async function getCatalog(signal: AbortSignal): Promise<CatalogPage> {
   const response = await request(
-    "/api/orbital-objects?page=1&pageSize=200",
+    "/api/orbital-objects?page=1&pageSize=500",
     signal,
   );
   return parseCatalog(await readJson(response));

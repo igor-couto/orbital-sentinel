@@ -37,11 +37,11 @@ public sealed class ConjunctionRepository(NpgsqlDataSource dataSource, ILogger<C
                 o.updated_at AS UpdatedAt,e.version AS Version,e.elements::text AS Elements,
                 e.fingerprint AS Fingerprint,e.ingested_at AS IngestedAt
             FROM orbital_objects o JOIN orbital_element_sets e
-                ON e.orbital_object_id=o.id AND e.version=o.current_version ORDER BY o.id LIMIT 201;
+                ON e.orbital_object_id=o.id AND e.version=o.current_version ORDER BY o.id LIMIT 501;
             """, transaction: transaction, cancellationToken: cancellationToken))).ToArray();
         if (rows.Length < 2) return null;
-        if (rows.Length > 200)
-            throw new InvalidOperationException("Conjunction screening currently supports at most 200 catalog objects; the run was not silently truncated.");
+        if (rows.Length > 500)
+            throw new InvalidOperationException("Conjunction screening currently supports at most 500 catalog objects; the run was not silently truncated.");
         if (step.Ticks % TimeSpan.TicksPerSecond != 0 || step.TotalSeconds is < 1 or > int.MaxValue)
             throw new ArgumentOutOfRangeException(nameof(step));
         var context = new PredictionRunContext(Guid.NewGuid(), DateTimeOffset.UtcNow, startUtc.ToUniversalTime(),
@@ -531,7 +531,7 @@ public sealed class ConjunctionRepository(NpgsqlDataSource dataSource, ILogger<C
             context.PredictionEndUtc <= context.PredictionStartUtc ||
             context.PredictionEndUtc - context.PredictionStartUtc > TimeSpan.FromHours(48) || context.StepSeconds is < 1 or > 300 ||
             Math.Ceiling((context.PredictionEndUtc - context.PredictionStartUtc).TotalSeconds / context.StepSeconds) > 10000 ||
-            context.Objects.Count is < 2 or > 200 || context.Objects.Select(x => x.Object.Id).Distinct().Count() != context.Objects.Count ||
+            context.Objects.Count is < 2 or > 500 || context.Objects.Select(x => x.Object.Id).Distinct().Count() != context.Objects.Count ||
             (context.Source == "Real" && context.ScenarioId is not null) || (context.Source == "Simulation" && context.ScenarioId is null))
             throw new ArgumentException("Invalid prediction-run context.", nameof(context));
         foreach (var orbit in context.Objects)

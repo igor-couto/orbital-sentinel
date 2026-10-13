@@ -17,6 +17,21 @@ public sealed class CelesTrakTests
         """;
 
     [Fact]
+    public async Task Imports_500_distinct_objects_without_truncating_to_the_previous_limit()
+    {
+        var objects = Enumerable.Range(1, 501).Select(id =>
+        {
+            var row = JsonNode.Parse(ValidOmm)!.AsObject();
+            row["NORAD_CAT_ID"] = id;
+            return row.ToJsonString();
+        });
+        var handler = new FakeHandler((_, _) => Response("[" + string.Join(",", objects) + "]"));
+        var rows = await Client(handler, max: 500).FetchAsync();
+        Assert.Equal(500, rows.Count);
+        Assert.Equal(500, rows.Select(x => x.NoradCatalogId).Distinct().Count());
+    }
+
+    [Fact]
     public async Task Maps_OMM_numeric_strings_UTC_and_zero_values_with_ambiguous_type_left_unknown()
     {
         var source = JsonNode.Parse(ValidOmm)!.AsObject();
@@ -214,7 +229,7 @@ public sealed class CelesTrakTests
         Assert.Throws<ArgumentException>(() => new CelesTrakClient(http,
             Options.Create(new CelesTrakOptions { RequestIntervalMinutes = 1 }), NullLogger<CelesTrakClient>.Instance));
         Assert.Throws<ArgumentException>(() => new CelesTrakClient(http,
-            Options.Create(new CelesTrakOptions { MaxObjects = 201 }), NullLogger<CelesTrakClient>.Instance));
+            Options.Create(new CelesTrakOptions { MaxObjects = 501 }), NullLogger<CelesTrakClient>.Instance));
     }
 
     private static CelesTrakClient Client(FakeHandler handler, string[]? groups = null, int max = 150) =>

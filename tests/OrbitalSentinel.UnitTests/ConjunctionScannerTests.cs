@@ -205,6 +205,19 @@ public sealed class ConjunctionScannerTests
     }
 
     [Fact]
+    public void Screens_every_unique_pair_in_a_500_object_run()
+    {
+        var objects = Enumerable.Range(0, 500).Select(_ => Snapshot(Guid.NewGuid())).ToArray();
+        var indices = objects.Select((x, i) => (x.Object.Id, i)).ToDictionary(x => x.Id, x => x.i);
+        var result = _scanner.Scan(Run() with { Objects = objects },
+            new AnalyticPropagator((id, _) => (new(indices[id] * 200_000, 0, 0), new(0, 0, 0))));
+        Assert.Equal(124750, result.Metrics.PairCount);
+        Assert.Empty(result.Encounters);
+        Assert.Throws<ArgumentException>(() => ConjunctionScanner.ValidateRun(
+            Run() with { Objects = objects.Append(Snapshot(Guid.NewGuid())).ToArray() }));
+    }
+
+    [Fact]
     public void ScannerOwnsOneReusableEvaluatorPerObject()
     {
         var propagator = Crossing(30, 100, 1000);

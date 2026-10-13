@@ -7,7 +7,7 @@ x-app-environment: &app-environment
   CelesTrak__Groups__0: stations
   CelesTrak__Groups__1: visual
   CelesTrak__Groups__2: iridium-33-debris
-  CelesTrak__MaxObjects: 150
+  CelesTrak__MaxObjects: 500
   CelesTrak__RequestIntervalMinutes: 120
   Prediction__HorizonHours: 24
   Prediction__StepSeconds: 60

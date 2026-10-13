@@ -11,7 +11,7 @@ namespace OrbitalSentinel.Propagation;
 public sealed class ConjunctionScanner : IConjunctionScanner
 {
     public const string AlgorithmVersion = ConjunctionAlgorithms.Current;
-    public const int MaximumObjects = 200;
+    public const int MaximumObjects = 500;
     public const int MaximumGridPoints = 10_001;
     private const double NearZeroSpeedSquared = 1e-18;
     private const double FlatDistanceToleranceMeters = 0.001;
@@ -272,7 +272,7 @@ public sealed class ConjunctionScanner : IConjunctionScanner
             throw new ArgumentOutOfRangeException(nameof(run), "Run sampling must contain at most 10,001 points, at intervals of one to 300 seconds.");
         if (run.Objects.Count > MaximumObjects || run.Objects.Any(orbit => orbit is null || orbit.Object is null || orbit.Object.Id == Guid.Empty) ||
             run.Objects.Select(orbit => orbit.Object.Id).Distinct().Count() != run.Objects.Count)
-            throw new ArgumentException("A run supports at most 200 objects with distinct, nonempty identities.", nameof(run));
+            throw new ArgumentException("A run supports at most 500 objects with distinct, nonempty identities.", nameof(run));
     }
 
     private static TemeStateSi InSi(StateVector state, DateTimeOffset expectedTime)
