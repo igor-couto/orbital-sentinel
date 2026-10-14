@@ -4,10 +4,8 @@ x-app-environment: &app-environment
   ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=orbital_sentinel;Username=orbital;Password=${POSTGRES_PASSWORD:-orbital_local_only}
   Kafka__BootstrapServers: kafka:9092
   CelesTrak__BaseUrl: https://celestrak.org/NORAD/elements/gp.php
-  CelesTrak__Groups__0: stations
-  CelesTrak__Groups__1: visual
-  CelesTrak__Groups__2: iridium-33-debris
-  CelesTrak__MaxObjects: 500
+  CelesTrak__DiscoverPublicGroups: "true"
+  CelesTrak__MaxObjects: ${CELESTRAK_MAX_OBJECTS:-0}
   CelesTrak__RequestIntervalMinutes: 120
   Prediction__HorizonHours: 24
   Prediction__StepSeconds: 60

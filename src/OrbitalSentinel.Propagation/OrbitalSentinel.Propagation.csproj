@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="OrbitalSentinel.UnitTests" />
     <ProjectReference Include="../OrbitalSentinel.Core/OrbitalSentinel.Core.csproj" />
     <PackageReference Include="SGP.NET" Version="1.6.0" />
   </ItemGroup>

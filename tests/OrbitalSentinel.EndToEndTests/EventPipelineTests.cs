@@ -47,9 +47,40 @@ public sealed class EventPipelineTests : IAsyncLifetime
         publisher = new OutboxPublisher(new OutboxRepository(dataSource), producer, Options.Create(options), NullLogger<OutboxPublisher>.Instance);
         propagation = new PropagationWorker(new CatalogRepository(dataSource), new TrajectoryRepository(dataSource),
             new ConsumerFailureRepository(dataSource), new Sgp4OrbitPropagator(), Options.Create(options),
-            Options.Create(new PredictionOptions { HorizonHours = 1, StepSeconds = 60 }), NullLogger<PropagationWorker>.Instance);
+            Options.Create(new PredictionOptions { PrecomputeTrajectories = true, HorizonHours = 1, StepSeconds = 60 }), NullLogger<PropagationWorker>.Instance);
         await publisher.StartAsync(CancellationToken.None);
         await propagation.StartAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task On_demand_visualization_consumes_idempotently_without_persisting_catalog_wide_paths()
+    {
+        await propagation.StopAsync(CancellationToken.None);
+        var id = Guid.NewGuid();
+        var catalog = new CatalogRepository(dataSource);
+        await catalog.UpsertAsync(new CatalogImport(id, null, "On-demand spacecraft", null, "Unknown",
+            new OrbitalElements(DateTimeOffset.UtcNow, 15.5, 0.0004, 51.64, 20, 30, 40, 0.00005, 0, 0)));
+        var worker = new PropagationWorker(catalog, new TrajectoryRepository(dataSource), new ConsumerFailureRepository(dataSource),
+            new Sgp4OrbitPropagator(), Options.Create(options), Options.Create(new PredictionOptions()), NullLogger<PropagationWorker>.Instance);
+        await using var connection = await dataSource.OpenConnectionAsync();
+        var payload = await connection.QuerySingleAsync<string>("SELECT payload::text FROM outbox_messages WHERE orbital_object_id=@id", new { id });
+        await worker.HandleAsync(payload, CancellationToken.None);
+        await worker.HandleAsync(payload, CancellationToken.None);
+        Assert.Equal(1, await connection.ExecuteScalarAsync<int>("SELECT count(*) FROM processed_messages WHERE consumer_name='trajectory-propagation'"));
+        using var factory = new WebApplicationFactory<ApiAssemblyMarker>().WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("ConnectionStrings:Postgres", database.GetConnectionString());
+            builder.UseSetting("Kafka:BootstrapServers", options.BootstrapServers);
+            builder.UseSetting("Prediction:PrecomputeTrajectories", "false");
+        });
+        using var client = factory.CreateClient();
+        var path = await client.GetFromJsonAsync<Trajectory>($"/api/orbital-objects/{id}/trajectory");
+        Assert.NotNull(path);
+        Assert.Equal(1441, path.Points.Count);
+        Assert.All(path.Points, p => Assert.True(p.SpeedKilometersPerSecond > 0));
+        var positions = await client.GetFromJsonAsync<ObjectPosition[]>("/api/orbital-objects/positions");
+        Assert.Equal(id, Assert.Single(positions!).OrbitalObjectId);
+        Assert.Equal(0, await connection.ExecuteScalarAsync<int>("SELECT count(*) FROM trajectory_predictions"));
     }
 
     [Fact]
@@ -60,6 +91,7 @@ public sealed class EventPipelineTests : IAsyncLifetime
         {
             builder.UseSetting("ConnectionStrings:Postgres", database.GetConnectionString());
             builder.UseSetting("Kafka:BootstrapServers", options.BootstrapServers);
+            builder.UseSetting("Prediction:PrecomputeTrajectories", "true");
         });
         using var client = factory.CreateClient();
         await using var hub = new HubConnectionBuilder().WithUrl(new Uri(client.BaseAddress!, "/hubs/traffic"), transport =>

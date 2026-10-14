@@ -7,7 +7,7 @@ public interface IConjunctionScanner
 
 public static class ConjunctionAlgorithms
 {
-    public const string Current = "teme-relative-motion-brent-v1";
+    public const string Current = "teme-spatial-relative-motion-brent-v2";
     public const string PropagatorVersion = "SGP.NET-1.6-WGS84";
 }
 
@@ -88,7 +88,9 @@ public sealed record ConjunctionScanMetrics(
     long CandidateCount,
     int RefinedCount,
     TimeSpan ScanDuration,
-    TimeSpan RefinementDuration);
+    TimeSpan RefinementDuration,
+    long NarrowPhaseIntervalCount = 0,
+    int UnpropagatedObjectCount = 0);
 
 public sealed record ConjunctionScanResult(
     IReadOnlyList<RefinedConjunction> Encounters,

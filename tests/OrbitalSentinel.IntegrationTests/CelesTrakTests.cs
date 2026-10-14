@@ -16,19 +16,58 @@ public sealed class CelesTrakTests
          "BSTAR":0.00003,"MEAN_MOTION_DOT":0,"MEAN_MOTION_DDOT":0}
         """;
 
-    [Fact]
-    public async Task Imports_500_distinct_objects_without_truncating_to_the_previous_limit()
+    [Theory]
+    [InlineData(0, 1200)]
+    [InlineData(500, 500)]
+    [InlineData(750, 750)]
+    public async Task Imports_all_distinct_objects_unless_an_explicit_limit_is_configured(int limit, int expected)
     {
-        var objects = Enumerable.Range(1, 501).Select(id =>
+        var objects = Enumerable.Range(1, 1200).Select(id =>
         {
             var row = JsonNode.Parse(ValidOmm)!.AsObject();
             row["NORAD_CAT_ID"] = id;
             return row.ToJsonString();
         });
         var handler = new FakeHandler((_, _) => Response("[" + string.Join(",", objects) + "]"));
-        var rows = await Client(handler, max: 500).FetchAsync();
-        Assert.Equal(500, rows.Count);
-        Assert.Equal(500, rows.Select(x => x.NoradCatalogId).Distinct().Count());
+        var rows = await Client(handler, max: limit).FetchAsync();
+        Assert.Equal(expected, rows.Count);
+        Assert.Equal(expected, rows.Select(x => x.NoradCatalogId).Distinct().Count());
+    }
+
+    [Fact]
+    public void Public_group_discovery_accepts_only_GP_links_on_the_official_host()
+    {
+        const string page = """
+            <a href="gp.php?GROUP=stations&amp;FORMAT=json">stations</a>
+            <a href='gp.php?GROUP=active&FORMAT=json'>active</a>
+            <a href='gp.php?GROUP=ACTIVE&FORMAT=csv'>duplicate</a>
+            <a href='https://example.org/NORAD/elements/gp.php?GROUP=untrusted'>external</a>
+            <a href='table.php?GROUP=not-a-feed'>table</a>
+            <a href='gp.php?SPECIAL=GPZ'>not a group</a>
+            """;
+        Assert.Equal(new[] { "active", "stations" }, CelesTrakGroups.Parse(page));
+        Assert.Throws<InvalidDataException>(() => CelesTrakGroups.Parse("<html>No feed links</html>"));
+    }
+
+    [Fact]
+    public async Task Overlapping_groups_use_the_newest_elements_and_one_unavailable_group_does_not_block_the_rest()
+    {
+        var newer = JsonNode.Parse(ValidOmm)!.AsObject();
+        newer["EPOCH"] = "2026-10-08T12:00:00Z";
+        var handler = new FakeHandler((request, _) => request.RequestUri!.Query.Contains("missing", StringComparison.Ordinal)
+            ? new HttpResponseMessage(HttpStatusCode.NotFound)
+            : Response($"[{(request.RequestUri.Query.Contains("newer", StringComparison.Ordinal) ? newer.ToJsonString() : ValidOmm)}]"));
+        var result = await Client(handler).FetchAsync(["older", "missing", "newer"], true);
+        Assert.Equal(DateTimeOffset.Parse("2026-10-08T12:00:00Z"), Assert.Single(result).Elements.EpochUtc);
+        Assert.Equal(3, handler.Attempts);
+    }
+
+    [Fact]
+    public async Task Partial_ingestion_stops_on_forbidden_responses_without_probing_more_groups()
+    {
+        var handler = new FakeHandler((_, _) => new HttpResponseMessage(HttpStatusCode.Forbidden));
+        await Assert.ThrowsAsync<InvalidDataException>(() => Client(handler).FetchAsync(["a", "b", "c"], true));
+        Assert.Equal(1, handler.Attempts);
     }
 
     [Fact]
@@ -190,8 +229,10 @@ public sealed class CelesTrakTests
         Assert.Equal(1, handler.Attempts);
     }
 
-    [Fact]
-    public async Task Round_robin_selection_includes_groups_and_deduplicates_catalog_ids()
+    [Theory]
+    [InlineData(4, new long[] { 1, 6, 2, 4 })]
+    [InlineData(0, new long[] { 1, 6, 2, 4, 7, 3, 5, 8 })]
+    public async Task Round_robin_selection_includes_groups_and_deduplicates_catalog_ids(int limit, long[] expected)
     {
         var handler = new FakeHandler((request, _) =>
         {
@@ -206,9 +247,9 @@ public sealed class CelesTrakTests
             });
             return Response($"[{string.Join(',', rows)}]");
         });
-        var client = Client(handler, ["stations", "visual", "iridium-33-debris"], 4);
+        var client = Client(handler, ["stations", "visual", "iridium-33-debris"], limit);
         var result = await client.FetchAsync();
-        Assert.Equal(new long?[] { 1, 6, 2, 4 }, result.Select(x => x.NoradCatalogId));
+        Assert.Equal(expected.Select(x => (long?)x), result.Select(x => x.NoradCatalogId));
         Assert.Equal(3, handler.Attempts);
     }
 
@@ -223,16 +264,16 @@ public sealed class CelesTrakTests
     }
 
     [Fact]
-    public void Configuration_rejects_excessive_polling_and_object_counts()
+    public void Configuration_rejects_excessive_polling_and_negative_object_limits()
     {
         using var http = new HttpClient();
         Assert.Throws<ArgumentException>(() => new CelesTrakClient(http,
             Options.Create(new CelesTrakOptions { RequestIntervalMinutes = 1 }), NullLogger<CelesTrakClient>.Instance));
         Assert.Throws<ArgumentException>(() => new CelesTrakClient(http,
-            Options.Create(new CelesTrakOptions { MaxObjects = 501 }), NullLogger<CelesTrakClient>.Instance));
+            Options.Create(new CelesTrakOptions { MaxObjects = -1 }), NullLogger<CelesTrakClient>.Instance));
     }
 
-    private static CelesTrakClient Client(FakeHandler handler, string[]? groups = null, int max = 150) =>
+    private static CelesTrakClient Client(FakeHandler handler, string[]? groups = null, int max = 0) =>
         new(new HttpClient(handler), Options.Create(new CelesTrakOptions
         {
             Groups = groups ?? ["stations"], MaxObjects = max

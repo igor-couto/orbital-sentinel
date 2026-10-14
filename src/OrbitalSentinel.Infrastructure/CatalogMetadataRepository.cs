@@ -27,12 +27,12 @@ public sealed class CatalogMetadataRepository(NpgsqlDataSource dataSource)
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await connection.ExecuteAsync(new CommandDefinition("DELETE FROM catalog_metadata WHERE group_name=@group;",
             new { group }, transaction, cancellationToken: cancellationToken));
-        foreach (var record in records)
-            await connection.ExecuteAsync(new CommandDefinition("""
-                INSERT INTO catalog_metadata(norad_catalog_id,group_name,payload,retrieved_at)
-                VALUES (@id,@group,CAST(@payload AS jsonb),@retrievedAt);
-                """, new { id = record.NoradCatalogId, group, payload = JsonSerializer.Serialize(record), retrievedAt },
-                transaction, cancellationToken: cancellationToken));
+        await connection.ExecuteAsync(new CommandDefinition("""
+            INSERT INTO catalog_metadata(norad_catalog_id,group_name,payload,retrieved_at)
+            SELECT (record->>'NORAD_CAT_ID')::bigint,@group,record,@retrievedAt
+            FROM jsonb_array_elements(CAST(@records AS jsonb)) record;
+            """, new { records = JsonSerializer.Serialize(records), group, retrievedAt },
+            transaction, cancellationToken: cancellationToken));
         await transaction.CommitAsync(cancellationToken);
     }
 

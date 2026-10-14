@@ -62,6 +62,21 @@ export function ConjunctionPanel({
           </span>
         </div>
       )}
+      {(state.run?.unpropagatedObjectCount ?? 0) > 0 && (
+        <div className="simulation-notice" role="status">
+          <strong>Partial screening coverage</strong>
+          <span>
+            {state.run!.unpropagatedObjectCount} of {state.run!.objectCount}{" "}
+            objects could not be propagated through the full window and were
+            excluded. Results cover the remaining objects.
+          </span>
+        </div>
+      )}
+      {state.source === "Real" && validWindow && (
+        <p className="history-caption" style={{ margin: "0 14px 10px" }}>
+          Latest completed screening. New results appear when ready.
+        </p>
+      )}
       <div
         className="conjunction-list catalog-list"
         aria-label="Upcoming conjunctions"

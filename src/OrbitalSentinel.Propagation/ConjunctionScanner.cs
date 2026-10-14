@@ -8,16 +8,16 @@ namespace OrbitalSentinel.Propagation;
 /// for this scan. Curvature screening assumes the configured bound on relative acceleration;
 /// subdivision assumes smooth orbital motion at that scale, not arbitrary oscillatory signals.
 /// </summary>
-public sealed class ConjunctionScanner : IConjunctionScanner
+public sealed partial class ConjunctionScanner : IConjunctionScanner
 {
     public const string AlgorithmVersion = ConjunctionAlgorithms.Current;
-    public const int MaximumObjects = 500;
     public const int MaximumGridPoints = 10_001;
     private const double NearZeroSpeedSquared = 1e-18;
     private const double FlatDistanceToleranceMeters = 0.001;
     private const double FlatRadialSpeedToleranceMetersPerSecond = 1e-6;
 
-    public ConjunctionScanResult Scan(PredictionRunContext run, IOrbitPropagator propagator,
+    // Reference implementation retained for numerical parity tests of the spatial broad phase.
+    internal ConjunctionScanResult ScanExhaustive(PredictionRunContext run, IOrbitPropagator propagator,
         CancellationToken cancellationToken = default)
     {
         ValidateRun(run);
@@ -270,9 +270,9 @@ public sealed class ConjunctionScanner : IConjunctionScanner
         if (run.StepSeconds is < 1 or > 300 || run.StepSeconds > duration.TotalSeconds ||
             Math.Ceiling(duration.TotalSeconds / run.StepSeconds) + 1 > MaximumGridPoints)
             throw new ArgumentOutOfRangeException(nameof(run), "Run sampling must contain at most 10,001 points, at intervals of one to 300 seconds.");
-        if (run.Objects.Count > MaximumObjects || run.Objects.Any(orbit => orbit is null || orbit.Object is null || orbit.Object.Id == Guid.Empty) ||
+        if (run.Objects.Any(orbit => orbit is null || orbit.Object is null || orbit.Object.Id == Guid.Empty) ||
             run.Objects.Select(orbit => orbit.Object.Id).Distinct().Count() != run.Objects.Count)
-            throw new ArgumentException("A run supports at most 500 objects with distinct, nonempty identities.", nameof(run));
+            throw new ArgumentException("A run requires objects with distinct, nonempty identities.", nameof(run));
     }
 
     private static TemeStateSi InSi(StateVector state, DateTimeOffset expectedTime)

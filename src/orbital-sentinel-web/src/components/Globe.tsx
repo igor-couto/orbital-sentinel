@@ -1,11 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type * as Cesium from "cesium";
-import {
-  interpolatePosition,
-  isCurrentPosition,
-  kindColor,
-  objectKind,
-} from "../domain/orbits";
+import { isCurrentPosition, kindColor, objectKind } from "../domain/orbits";
 import type {
   ObjectPosition,
   OrbitSnapshot,
@@ -14,6 +9,8 @@ import type {
 import { Icon } from "./Icon";
 import type { ConjunctionVisualization } from "../domain/conjunctions";
 import { reconcileGlobeEntities } from "./globeEntities";
+import { createLivePolyline } from "./livePolyline";
+import { predictionPath } from "../domain/predictionPath";
 
 declare global {
   interface Window {
@@ -49,6 +46,9 @@ export function Globe({
 }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
+  const predictionLine = useRef<ReturnType<typeof createLivePolyline> | null>(
+    null,
+  );
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const onSelectRef = useRef(onSelect);
@@ -93,6 +93,7 @@ export function Globe({
       });
       const activeViewer = viewer;
       viewerRef.current = viewer;
+      predictionLine.current = createLivePolyline(C);
       viewer.scene.backgroundColor = C.Color.fromCssColorString("#080d16");
       viewer.scene.globe.baseColor = C.Color.fromCssColorString("#152b3c");
       viewer.scene.globe.enableLighting = false;
@@ -151,6 +152,7 @@ export function Globe({
       disposed = true;
       setReady(false);
       viewerRef.current = null;
+      predictionLine.current = null;
       if (viewer && !viewer.isDestroyed()) viewer.destroy();
     };
   }, []);
@@ -204,7 +206,7 @@ export function Globe({
             }),
           ]),
           point: {
-            pixelSize: 11,
+            pixelSize: 9,
             color: C.Color.fromCssColorString(member.color),
             outlineColor: C.Color.fromCssColorString("#0b1018"),
             outlineWidth: 2,
@@ -297,10 +299,10 @@ export function Globe({
         name: orbit.object.name,
         position: new C.Cartesian3(x, y, z),
         point: {
-          pixelSize: position.orbitalObjectId === selectedId ? 9 : 5,
+          pixelSize: position.orbitalObjectId === selectedId ? 8 : 4,
           color,
           outlineColor: C.Color.fromCssColorString("#07151b"),
-          outlineWidth: 1.5,
+          outlineWidth: 1,
         },
       });
     }
@@ -328,10 +330,10 @@ export function Globe({
           }),
         ]),
         point: {
-          pixelSize: 10,
+          pixelSize: 8,
           color: C.Color.fromCssColorString("#f3faf6"),
           outlineColor: C.Color.fromCssColorString("#76e3b6"),
-          outlineWidth: 3,
+          outlineWidth: 2,
         },
         label: {
           text: selected.object.name,
@@ -344,15 +346,7 @@ export function Globe({
           scale: 1,
         },
       });
-      add({
-        id: "prediction-path",
-        polyline: {
-          positions: [],
-          width: 1.6,
-          material: C.Color.fromCssColorString("#76e3b6").withAlpha(0.75),
-          arcType: C.ArcType.NONE,
-        },
-      });
+      if (predictionLine.current) entities.push(predictionLine.current.entity);
     }
     reconcileGlobeEntities(viewer.entities, entities);
     viewer.scene.requestRender();
@@ -376,28 +370,14 @@ export function Globe({
         entity.show = !preview && isCurrentPosition(position, timestamp);
     }
     const path = viewer.entities.getById("prediction-path");
-    if (path?.polyline && trajectory) {
-      const start = Math.max(timestamp, Date.parse(trajectory.startUtc));
-      const end = start + Math.min(periodMinutes, 180) * 60_000;
-      const points = trajectory.points.filter(
-        (point) =>
-          Date.parse(point.timestampUtc) >= start &&
-          Date.parse(point.timestampUtc) <= end,
-      );
-      const pathPositions = points.map(
-        ({ positionEcefMeters: { x, y, z } }) => new C.Cartesian3(x, y, z),
-      );
-      const firstPosition = interpolatePosition(trajectory, start);
-      if (
-        firstPosition &&
-        (!points.length || Date.parse(points[0].timestampUtc) !== start)
-      ) {
-        pathPositions.unshift(
-          new C.Cartesian3(firstPosition.x, firstPosition.y, firstPosition.z),
-        );
-      }
+    if (path && trajectory && predictionLine.current) {
+      const pathPositions = predictionPath(
+        trajectory,
+        timestamp,
+        periodMinutes,
+      ).map(({ x, y, z }) => new C.Cartesian3(x, y, z));
       path.show = showTrajectory && pathPositions.length > 1;
-      path.polyline.positions = new C.ConstantProperty(pathPositions);
+      predictionLine.current.setPositions(pathPositions);
     }
     viewer.scene.requestRender();
   }, [

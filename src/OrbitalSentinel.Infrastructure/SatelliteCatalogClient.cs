@@ -23,7 +23,7 @@ public sealed class SatelliteCatalogClient(HttpClient httpClient, IOptions<Satel
             $"{options.Value.BaseUrl}?GROUP={Uri.EscapeDataString(group)}&FORMAT=JSON",
             HttpCompletionOption.ResponseHeadersRead, timeout.Token);
         response.EnsureSuccessStatusCode();
-        const int maximumBytes = 8 * 1024 * 1024;
+        const int maximumBytes = 64 * 1024 * 1024;
         await response.Content.LoadIntoBufferAsync(maximumBytes, timeout.Token);
         var records = JsonSerializer.Deserialize<SatelliteCatalogRecord[]>(
             await response.Content.ReadAsStringAsync(timeout.Token),

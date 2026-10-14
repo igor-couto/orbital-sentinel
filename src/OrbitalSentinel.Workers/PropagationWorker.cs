@@ -92,6 +92,13 @@ public sealed class PropagationWorker(CatalogRepository catalog, TrajectoryRepos
         using var activity = Telemetry.Activities.StartActivity("orbit.propagate");
         var orbit = await catalog.GetVersionAsync(message.OrbitalObjectId, message.OrbitVersion, cancellationToken)
             ?? throw new InvalidDataException("Referenced orbital element version does not exist.");
+        if (!prediction.Value.PrecomputeTrajectories)
+        {
+            // The API computes shared current positions and requested paths from the catalog.
+            // Keep consumption idempotent without writing millions of unused trajectory samples.
+            await trajectories.AcknowledgeAsync(message.EventId, cancellationToken);
+            return;
+        }
         var stopwatch = Stopwatch.StartNew();
         // Truncate to a UTC minute. Deterministic sampling within a delivery attempt and a bounded rolling cache.
         var now = DateTimeOffset.UtcNow;

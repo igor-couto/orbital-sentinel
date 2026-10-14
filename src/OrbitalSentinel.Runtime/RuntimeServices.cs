@@ -2,6 +2,7 @@ using Confluent.Kafka;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using OrbitalSentinel.Core;
@@ -38,6 +39,7 @@ public static class RuntimeServices
         services.AddSingleton<IConjunctionScanner, ConjunctionScanner>();
         services.AddSingleton<ConjunctionApplication>();
         services.AddSingleton<IOrbitPropagator, Sgp4OrbitPropagator>();
+        services.AddSingleton<CatalogVisualization>();
         services.AddOptions<KafkaOptions>().Bind(configuration.GetSection("Kafka"))
             .ValidateDataAnnotations().Validate(x => new[] { x.OrbitTopic, x.TrajectoryTopic, x.DeadLetterTopic, x.PredictionRunTopic, x.ConjunctionTopic }.Distinct().Count() == 5,
                 "Kafka topics must be distinct.").ValidateOnStart();
@@ -52,8 +54,8 @@ public static class RuntimeServices
             .Bind(configuration.GetSection("CelesTrak"))
             .PostConfigure(x => { if (x.Groups.Length == 0) x.Groups = new CelesTrakOptions().Groups; })
             .Validate(x => x.RequestIntervalMinutes >= 120, "CelesTrak polling must be at least 120 minutes apart.")
-            .Validate(x => x.MaxObjects is >= 1 and <= 500, "Track 1 to 500 objects.")
-            .Validate(x => x.Groups.Length is > 0 and <= 5 && x.Groups.All(g => !string.IsNullOrWhiteSpace(g)), "Configure 1 to 5 groups.")
+            .Validate(x => x.MaxObjects >= 0, "Use 0 for unlimited objects, or a positive object limit.")
+            .Validate(x => x.Groups.Length > 0 && x.Groups.All(g => !string.IsNullOrWhiteSpace(g)), "Configure nonempty groups.")
             .Validate(x => Uri.TryCreate(x.BaseUrl, UriKind.Absolute, out var uri) && uri.Scheme == "https" && string.IsNullOrEmpty(uri.Query), "Use an HTTPS CelesTrak URL without a query string.")
             .Validate(x => x.TimeoutSeconds is >= 1 and <= 60 && x.MaxRetries is >= 0 and <= 3, "HTTP retries and timeouts must be bounded.")
             .ValidateOnStart();
@@ -63,6 +65,13 @@ public static class RuntimeServices
             client.MaxResponseContentBufferSize = 16 * 1024 * 1024;
             client.DefaultRequestHeaders.UserAgent.ParseAdd("OrbitalSentinel/0.1 (educational-orbit-viewer)");
         });
+        services.AddHttpClient("celestrak-groups", client =>
+        {
+            client.Timeout = Timeout.InfiniteTimeSpan;
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("OrbitalSentinel/0.1 (educational-orbit-viewer)");
+        });
+        services.AddSingleton(sp => new CelesTrakGroups(sp.GetRequiredService<IHttpClientFactory>().CreateClient("celestrak-groups"),
+            sp.GetRequiredService<IOptions<CelesTrakOptions>>(), sp.GetRequiredService<ILogger<CelesTrakGroups>>()));
         services.AddSingleton<IProducer<string, string>>(sp => new ProducerBuilder<string, string>(new ProducerConfig
         {
             BootstrapServers = sp.GetRequiredService<IOptions<KafkaOptions>>().Value.BootstrapServers,

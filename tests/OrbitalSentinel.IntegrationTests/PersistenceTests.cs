@@ -239,6 +239,18 @@ public sealed class PersistenceTests(PostgresFixture fixture) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task New_public_groups_start_immediately_while_legacy_groups_keep_their_cooldown()
+    {
+        var schedules = new JobScheduleRepository(fixture.DataSource);
+        Assert.True(await schedules.TryBeginAsync("celestrak-ingestion", TimeSpan.FromHours(2)));
+        await schedules.PreserveLegacyIngestionScheduleAsync(CancellationToken.None);
+        await schedules.PreserveLegacyIngestionScheduleAsync(CancellationToken.None);
+        Assert.False(await schedules.TryBeginAsync("celestrak-group:stations", TimeSpan.FromHours(2)));
+        Assert.True(await schedules.TryBeginAsync("celestrak-group:active", TimeSpan.FromHours(2)));
+        Assert.False(await schedules.TryBeginAsync("celestrak-group:active", TimeSpan.FromHours(2)));
+    }
+
+    [Fact]
     public async Task Quarantine_is_durable_idempotent_and_atomic_with_dead_letter_event()
     {
         var failures = new ConsumerFailureRepository(fixture.DataSource);

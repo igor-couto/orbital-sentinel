@@ -37,6 +37,9 @@ public static class ConjunctionEndpoints
         {
             var source = request.Query["source"].FirstOrDefault() ?? "Real";
             if (!ValidSource(source)) return Invalid("Source must be Real or Simulation.");
+            if (source == "Real" && request.Query["preferCompleted"] == "true" &&
+                await repository.GetLatestCompletedRealRunAsync(DateTimeOffset.UtcNow, ct) is { } completed)
+                return Results.Ok(RunView(completed));
             var runs = await repository.ListRunsAsync(source, 1, 1, ct);
             return runs.Items.FirstOrDefault() is { } run ? Results.Ok(RunView(run)) : Missing("Prediction run");
         });
@@ -69,6 +72,7 @@ public static class ConjunctionEndpoints
         run.Context.CreatedAtUtc, run.Context.PredictionStartUtc, run.Context.PredictionEndUtc,
         clockUtc = run.Context.Source == "Simulation" ? run.Context.PredictionStartUtc : DateTimeOffset.UtcNow,
         objectCount = run.Context.Objects.Count, error = run.LastError, run.Attempts, run.CompletedAtUtc,
+        unpropagatedObjectCount = run.Metrics?.UnpropagatedObjectCount ?? 0,
         run.Context.AlgorithmVersion, run.Context.PropagatorVersion, run.Context.Settings, run.Metrics
     };
 

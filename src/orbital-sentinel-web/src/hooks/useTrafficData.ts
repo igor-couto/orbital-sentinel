@@ -80,7 +80,7 @@ export function useTrafficData() {
     setRevision((previous) => previous + 1);
     setManualRevision((previous) => previous + 1);
   }, []);
-  const catalog = usePolledResource<CatalogPage>(getCatalog, 60_000, revision);
+  const catalog = usePolledResource<CatalogPage>(getCatalog, 300_000, revision);
   const positions = usePolledResource<ObjectPosition[]>(
     getPositions,
     15_000,
@@ -188,13 +188,20 @@ export function useSelectedTrajectory(
     if (!objectId) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
-    setState({
+    // Refresh the same orbital revision in the background. Clearing valid samples
+    // here makes both the selected marker and path disappear during every reload.
+    const retainedValue = (previous: TrajectoryState) =>
+      previous.objectId === objectId &&
+      previous.value?.orbitVersion === orbitVersion
+        ? previous.value
+        : null;
+    setState((previous) => ({
       objectId,
-      value: null,
+      value: retainedValue(previous),
       loading: true,
       pending: false,
       error: null,
-    });
+    }));
     async function refresh() {
       let retryAfterMs = 60_000;
       try {
@@ -206,13 +213,13 @@ export function useSelectedTrajectory(
         ) {
           retryAfterMs =
             result.status === "pending" ? result.retryAfterMs : 10_000;
-          setState({
+          setState((previous) => ({
             objectId: objectId!,
-            value: null,
+            value: retainedValue(previous),
             loading: false,
             pending: true,
             error: null,
-          });
+          }));
         } else {
           setState({
             objectId: objectId!,
@@ -224,16 +231,16 @@ export function useSelectedTrajectory(
         }
       } catch (error) {
         if (!controller.signal.aborted)
-          setState({
+          setState((previous) => ({
             objectId: objectId!,
-            value: null,
+            value: retainedValue(previous),
             loading: false,
             pending: false,
             error:
               error instanceof Error
                 ? error.message
                 : "Unable to load this prediction.",
-          });
+          }));
       } finally {
         if (!controller.signal.aborted)
           timer = setTimeout(refresh, retryAfterMs);
@@ -245,7 +252,8 @@ export function useSelectedTrajectory(
       clearTimeout(timer);
     };
   }, [objectId, orbitVersion, updateVersion, revision]);
-  return state.objectId === objectId
+  return state.objectId === objectId &&
+    (!state.value || state.value.orbitVersion === orbitVersion)
     ? state
     : {
         objectId: objectId ?? null,

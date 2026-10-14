@@ -52,6 +52,8 @@ public sealed class ConjunctionOptions
 
 public sealed class PredictionOptions
 {
+    // Small deployments can retain the original Kafka-driven cache for every object.
+    public bool PrecomputeTrajectories { get; set; } = false;
     [Range(1, 48)] public int HorizonHours { get; set; } = 24;
     [Range(30, 600)] public int StepSeconds { get; set; } = 60;
 }

@@ -11,16 +11,18 @@ namespace OrbitalSentinel.Infrastructure;
 public sealed class CelesTrakOptions
 {
     public string BaseUrl { get; set; } = "https://celestrak.org/NORAD/elements/gp.php";
-    public string[] Groups { get; set; } = ["stations", "visual", "iridium-33-debris"];
-    public int MaxObjects { get; set; } = 500;
-    public int TimeoutSeconds { get; set; } = 30;
+    public bool DiscoverPublicGroups { get; set; } = true;
+    public string[] Groups { get; set; } = CelesTrakGroups.Published;
+    // Zero imports every valid, distinct object from the configured groups.
+    public int MaxObjects { get; set; } = 0;
+    public int TimeoutSeconds { get; set; } = 60;
     public int MaxRetries { get; set; } = 2;
     public int RequestIntervalMinutes { get; set; } = 120;
 }
 
 public sealed class CelesTrakClient
 {
-    private const int MaxResponseBytes = 8 * 1024 * 1024;
+    private const int MaxResponseBytes = 64 * 1024 * 1024;
     private static readonly JsonSerializerOptions SourceJson = new()
     {
         NumberHandling = JsonNumberHandling.AllowReadingFromString
@@ -36,28 +38,44 @@ public sealed class CelesTrakClient
         this.logger = logger;
         if (!Uri.TryCreate(this.options.BaseUrl, UriKind.Absolute, out var uri)
             || uri.Scheme is not ("http" or "https") || !string.IsNullOrEmpty(uri.Query)
-            || this.options.MaxObjects is < 1 or > 500 || this.options.TimeoutSeconds is < 1 or > 120
+            || this.options.MaxObjects < 0 || this.options.TimeoutSeconds is < 1 or > 120
             || this.options.MaxRetries is < 0 or > 3 || this.options.RequestIntervalMinutes < 120
-            || this.options.Groups.Length is < 1 or > 5
+            || this.options.Groups.Length < 1
             || this.options.Groups.Any(string.IsNullOrWhiteSpace))
-            throw new ArgumentException("Invalid CelesTrak configuration: use 1..500 objects, 1..5 groups, finite retries and a >=120 minute poll interval.", nameof(options));
+            throw new ArgumentException("Invalid CelesTrak configuration: use a nonnegative object limit (0 means unlimited), nonempty groups, finite retries and a >=120 minute poll interval.", nameof(options));
     }
 
     public async Task<IReadOnlyList<CatalogImport>> FetchAsync(CancellationToken cancellationToken = default)
+        => await FetchAsync(options.Groups, false, cancellationToken);
+
+    public async Task<IReadOnlyList<CatalogImport>> FetchAsync(string[] groupNames, bool allowPartial,
+        CancellationToken cancellationToken = default)
     {
         var groups = new List<IReadOnlyList<CatalogImport>>();
-        // Stop the cycle on a failed group. In particular, 403/404 are never retried.
-        foreach (var group in options.Groups.Distinct(StringComparer.OrdinalIgnoreCase))
-            groups.Add(await FetchGroupAsync(group, cancellationToken));
+        foreach (var group in groupNames.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try { groups.Add(await FetchGroupAsync(group, cancellationToken)); }
+            catch (Exception ex) when (allowPartial && !cancellationToken.IsCancellationRequested &&
+                ex is HttpRequestException or OperationCanceledException or InvalidDataException or JsonException)
+            {
+                logger.LogWarning(ex, "CelesTrak group {Group} unavailable; its stored objects are retained", group);
+                // A block or rate limit can apply to the whole IP. Do not keep probing other groups.
+                if (ex is HttpRequestException { StatusCode: HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests }) break;
+            }
+            if (allowPartial) await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+        }
+        var latest = groups.SelectMany(g => g).GroupBy(x => x.NoradCatalogId)
+            .ToDictionary(g => g.Key!.Value, g => g.MaxBy(x => x.Elements.EpochUtc)!);
         var selected = new List<CatalogImport>();
         var seen = new HashSet<long>();
-        for (var index = 0; selected.Count < options.MaxObjects && groups.Any(x => x.Count > index); index++)
+        var limit = options.MaxObjects == 0 ? int.MaxValue : options.MaxObjects;
+        for (var index = 0; selected.Count < limit && groups.Any(x => x.Count > index); index++)
         {
             foreach (var group in groups)
             {
-                if (index >= group.Count || selected.Count >= options.MaxObjects) continue;
+                if (index >= group.Count || selected.Count >= limit) continue;
                 var candidate = group[index];
-                if (candidate.NoradCatalogId is { } id && seen.Add(id)) selected.Add(candidate);
+                if (candidate.NoradCatalogId is { } id && seen.Add(id)) selected.Add(latest[id]);
             }
         }
         if (selected.Count == 0)
@@ -96,7 +114,7 @@ public sealed class CelesTrakClient
                 {
                     response.EnsureSuccessStatusCode();
                     if (response.Content.Headers.ContentLength > MaxResponseBytes)
-                        throw new InvalidDataException("CelesTrak response exceeds the 8 MiB limit.");
+                        throw new InvalidDataException("CelesTrak response exceeds the 64 MiB safety limit.");
                     await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
                     using var buffer = new MemoryStream();
                     var chunk = new byte[16384];
@@ -105,7 +123,7 @@ public sealed class CelesTrakClient
                         var count = await stream.ReadAsync(chunk, timeout.Token);
                         if (count == 0) break;
                         if (buffer.Length + count > MaxResponseBytes)
-                            throw new InvalidDataException("CelesTrak response exceeds the 8 MiB limit.");
+                            throw new InvalidDataException("CelesTrak response exceeds the 64 MiB safety limit.");
                         await buffer.WriteAsync(chunk.AsMemory(0, count), timeout.Token);
                     }
                     buffer.Position = 0;

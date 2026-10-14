@@ -42,6 +42,10 @@ export function parsePredictionRun(value: unknown): PredictionRun {
     !finite(value.objectCount) ||
     !Number.isSafeInteger(value.objectCount) ||
     value.objectCount < 0 ||
+    (value.unpropagatedObjectCount !== undefined &&
+      (!Number.isSafeInteger(value.unpropagatedObjectCount) ||
+        (value.unpropagatedObjectCount as number) < 0 ||
+        (value.unpropagatedObjectCount as number) > value.objectCount)) ||
     !(
       value.error === undefined ||
       value.error === null ||
@@ -186,7 +190,7 @@ export async function getPredictionRun(
     const response = await request(
       id
         ? `/api/prediction-runs/${encodeURIComponent(id)}`
-        : `/api/prediction-runs/latest?source=${source}`,
+        : `/api/prediction-runs/latest?source=${source}&preferCompleted=true`,
       signal,
     );
     const run = parsePredictionRun(await json(response));

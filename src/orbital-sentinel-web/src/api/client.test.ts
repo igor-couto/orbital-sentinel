@@ -62,6 +62,87 @@ const trajectory = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("orbital API boundary", () => {
+  it("loads every catalog page, including objects beyond the first 500", async () => {
+    const items = Array.from({ length: 1205 }, (_, index) => ({
+      ...catalog.items[0],
+      object: { ...catalog.items[0].object, id: `object-${index}` },
+    }));
+    const fetchMock = vi.fn().mockImplementation(async (path: string) => {
+      const url = new URL(path, "http://localhost");
+      const page = Number(url.searchParams.get("page"));
+      const pageSize = Number(url.searchParams.get("pageSize"));
+      return Response.json({
+        items: items.slice((page - 1) * pageSize, page * pageSize),
+        totalCount: items.length,
+        page,
+        pageSize,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await getCatalog(new AbortController().signal);
+    expect(result.items).toEqual(items);
+    expect(result.totalCount).toBe(1205);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+  it("deduplicates objects moved across page boundaries during ingestion", async () => {
+    const last = {
+      ...catalog.items[0],
+      object: { ...catalog.items[0].object, id: "last" },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json({ ...catalog, pageSize: 1, totalCount: 3 }),
+        )
+        .mockResolvedValueOnce(
+          Response.json({ ...catalog, page: 2, pageSize: 1, totalCount: 3 }),
+        )
+        .mockResolvedValueOnce(
+          Response.json({
+            ...catalog,
+            items: [last],
+            page: 3,
+            pageSize: 1,
+            totalCount: 3,
+          }),
+        ),
+    );
+    const result = await getCatalog(new AbortController().signal);
+    expect(result.items.map((item) => item.object.id)).toEqual([
+      objectId,
+      "last",
+    ]);
+    expect(result.totalCount).toBe(3);
+  });
+  it("fails the refresh if a later catalog page fails instead of showing a truncated catalog", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json({ ...catalog, pageSize: 1, totalCount: 2 }),
+        )
+        .mockResolvedValueOnce(new Response("", { status: 503 })),
+    );
+    await expect(
+      getCatalog(new AbortController().signal),
+    ).rejects.toMatchObject({ status: 503 });
+  });
+  it("rejects a repeated page instead of quietly omitting the remaining objects", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockImplementation(async () =>
+          Response.json({ ...catalog, pageSize: 1, totalCount: 2 }),
+        ),
+    );
+    await expect(
+      getCatalog(new AbortController().signal),
+    ).rejects.toMatchObject({ status: 502 });
+  });
   it("accepts an object with an internal identifier and no NORAD identifier", () => {
     expect(parseCatalog(catalog).items[0].object.noradCatalogId).toBeNull();
   });

@@ -1,4 +1,5 @@
 import { ObjectFacts } from "./components/ObjectFacts";
+import { CatalogList } from "./components/CatalogList";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Globe } from "./components/Globe";
 import { Icon } from "./components/Icon";
@@ -6,7 +7,6 @@ import {
   formatUtc,
   interpolatePosition,
   isCurrentPosition,
-  kindLabel,
   objectKind,
 } from "./domain/orbits";
 import type { ObjectKind, OrbitSnapshot } from "./domain/orbits";
@@ -280,10 +280,12 @@ export function App() {
                     ))}
                   </div>
                 </div>
-                <div
-                  className="catalog-list"
-                  aria-label="Orbital objects"
-                  aria-busy={data.catalog.loading}
+                <CatalogList
+                  key={`${filter}:${search}`}
+                  items={filtered}
+                  selectedId={selectedId}
+                  onSelect={selectObject}
+                  loading={data.catalog.loading}
                 >
                   {data.catalog.loading && (
                     <div className="empty-state">
@@ -338,36 +340,7 @@ export function App() {
                         </button>
                       </div>
                     )}
-                  {filtered.map((item) => {
-                    const kind = objectKind(item.object.objectType);
-                    return (
-                      <button
-                        key={item.object.id}
-                        className={`object-row ${selectedId === item.object.id ? "selected" : ""}`}
-                        onClick={() => selectObject(item.object.id)}
-                        aria-pressed={selectedId === item.object.id}
-                      >
-                        <span className={`object-marker ${kind}`}>
-                          <Icon
-                            name={kind === "payload" ? "orbit" : "layers"}
-                            size={17}
-                          />
-                        </span>
-                        <span className="object-text">
-                          <strong>{item.object.name}</strong>
-                          <span>
-                            {item.object.noradCatalogId === null
-                              ? "No NORAD ID"
-                              : `NORAD ${item.object.noradCatalogId}`}
-                            <span className="text-dot">·</span>
-                            {kindLabel[kind]}
-                          </span>
-                        </span>
-                        <Icon name="chevron" size={13} />
-                      </button>
-                    );
-                  })}
-                </div>
+                </CatalogList>
                 <div className="catalog-footer">
                   <span>
                     {filtered.length} of {data.catalog.value?.totalCount ?? 0}{" "}
@@ -375,12 +348,6 @@ export function App() {
                   </span>
                   <span>OMM source</span>
                 </div>
-                {(data.catalog.value?.totalCount ?? 0) > 500 && (
-                  <p className="limit-note">
-                    This view displays the first 500 objects. Search filters the
-                    loaded catalog.
-                  </p>
-                )}
               </>
             )}
           </aside>
@@ -628,8 +595,10 @@ export function App() {
                             <span className="toggle-track" aria-hidden="true" />
                           </label>
                           <p className="prediction-help">
-                            Path shows up to one orbit ahead (maximum 3 hours)
-                            in Earth-fixed coordinates.
+                            Path shows one orbital period ahead, or the
+                            remaining prediction window. Earth rotates beneath
+                            the orbit, so this Earth-fixed path does not form a
+                            closed loop.
                           </p>
                           {predictionExpired && (
                             <p className="notice warning">

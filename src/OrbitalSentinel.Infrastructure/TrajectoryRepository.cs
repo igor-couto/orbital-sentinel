@@ -7,6 +7,15 @@ namespace OrbitalSentinel.Infrastructure;
 
 public sealed class TrajectoryRepository(NpgsqlDataSource dataSource)
 {
+    public async Task AcknowledgeAsync(Guid eventId, CancellationToken ct)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        await connection.ExecuteAsync(new CommandDefinition("""
+            INSERT INTO processed_messages(consumer_name,event_id) VALUES ('trajectory-propagation',@eventId)
+            ON CONFLICT DO NOTHING;
+            """, new { eventId }, cancellationToken: ct));
+    }
+
     public async Task<Trajectory?> GetAsync(Guid id, CancellationToken cancellationToken = default)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);

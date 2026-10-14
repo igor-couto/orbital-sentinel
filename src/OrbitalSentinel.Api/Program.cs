@@ -11,6 +11,7 @@ builder.Logging.AddJsonConsole(options => options.IncludeScopes = true);
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 32 * 1024);
 builder.Services.AddOrbitalRuntime(builder.Configuration);
 builder.Services.AddProblemDetails();
+builder.Services.AddResponseCompression(options => options.EnableForHttps = true);
 builder.Services.AddExceptionHandler<ApiExceptionHandler>();
 builder.Services.AddOpenApi();
 builder.Services.AddOptions<TrafficOptions>().Bind(builder.Configuration.GetSection("SignalR"))
@@ -49,6 +50,7 @@ builder.Services.AddRateLimiter(options =>
 var app = builder.Build();
 await app.Services.GetRequiredService<DatabaseMigrator>().MigrateAsync(app.Lifetime.ApplicationStopping);
 app.UseExceptionHandler();
+app.UseResponseCompression();
 app.UseStatusCodePages();
 // Default known-proxy restrictions remain intact. Configure trusted proxies at a TLS ingress when deploying.
 app.UseForwardedHeaders(new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto });
@@ -76,8 +78,10 @@ api.MapGet("/orbital-objects", async (CatalogRepository catalog, int? page, int?
     return Results.Ok(await catalog.ListAsync(pageNumber, size, search?.Trim(), ct));
 }).WithName("ListOrbitalObjects");
 
-api.MapGet("/orbital-objects/positions", async (TrajectoryRepository trajectories, CancellationToken ct) =>
-    Results.Ok(await trajectories.ListPositionsAsync(DateTimeOffset.UtcNow, ct)))
+api.MapGet("/orbital-objects/positions", async (TrajectoryRepository trajectories, CatalogVisualization visualization,
+    IOptions<PredictionOptions> prediction, CancellationToken ct) =>
+    Results.Ok(prediction.Value.PrecomputeTrajectories
+        ? await trajectories.ListPositionsAsync(DateTimeOffset.UtcNow, ct) : await visualization.GetPositionsAsync(ct)))
     .WithName("GetCurrentPositions");
 
 api.MapGet("/orbital-objects/{id:guid}", async (Guid id, CatalogRepository catalog, CancellationToken ct) =>
@@ -100,10 +104,23 @@ api.MapGet("/orbital-objects/{id:guid}/details", async (Guid id, CatalogReposito
 }).WithName("GetObjectDetails");
 
 api.MapGet("/orbital-objects/{id:guid}/trajectory", async (Guid id, CatalogRepository catalog, TrajectoryRepository trajectories,
-    HttpContext context, CancellationToken ct) =>
+    CatalogVisualization visualization, IOptions<PredictionOptions> prediction, HttpContext context, CancellationToken ct) =>
 {
     var orbit = await catalog.GetAsync(id, ct);
     if (orbit is null) return Results.Problem(statusCode: 404, title: "Orbital object not found.");
+    if (!prediction.Value.PrecomputeTrajectories)
+    {
+        try
+        {
+            var path = await visualization.GetTrajectoryAsync(orbit, ct);
+            context.Response.Headers.CacheControl = "private, max-age=30";
+            return Results.Ok(path);
+        }
+        catch (OrbitPropagationException)
+        {
+            return Results.Problem(statusCode: 422, title: "These orbital elements cannot produce a path for the requested prediction window.");
+        }
+    }
     var trajectory = await trajectories.GetAsync(id, ct);
     if (trajectory is null || trajectory.OrbitVersion != orbit.Version || trajectory.EndUtc <= DateTimeOffset.UtcNow)
     {

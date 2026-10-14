@@ -6,13 +6,13 @@ x-app-environment: &app-environment
   Kafka__BootstrapServers: kafka:9092
   AllowedHosts: orbital-sentinel.igorcouto.com;localhost;127.0.0.1;backend
   CelesTrak__BaseUrl: https://celestrak.org/NORAD/elements/gp.php
-  CelesTrak__Groups__0: stations
-  CelesTrak__Groups__1: visual
-  CelesTrak__Groups__2: iridium-33-debris
-  CelesTrak__MaxObjects: 500
+  CelesTrak__DiscoverPublicGroups: "true"
+  CelesTrak__MaxObjects: ${CELESTRAK_MAX_OBJECTS:-0}
   CelesTrak__RequestIntervalMinutes: 120
   Prediction__HorizonHours: 24
   Prediction__StepSeconds: 60
+  # Give the Raspberry Pi time to screen and save a full-catalog prediction run.
+  ConjunctionScreening__MaximumScanMinutes: ${CONJUNCTION_MAX_SCAN_MINUTES:-60}
 
 x-service: &service
   restart: unless-stopped

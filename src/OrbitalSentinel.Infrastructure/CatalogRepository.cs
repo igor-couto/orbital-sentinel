@@ -103,6 +103,14 @@ public sealed class CatalogRepository(NpgsqlDataSource dataSource)
         return row?.ToSnapshot();
     }
 
+    public async Task<IReadOnlyList<OrbitSnapshot>> ListAllAsync(CancellationToken ct = default)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(ct);
+        var rows = await connection.QueryAsync<SnapshotRow>(new CommandDefinition(SelectSnapshot +
+            " WHERE e.version=o.current_version ORDER BY o.name,o.id;", cancellationToken: ct));
+        return rows.Select(x => x.ToSnapshot()).ToArray();
+    }
+
     public async Task<OrbitSnapshot?> GetVersionAsync(Guid id, long version, CancellationToken cancellationToken = default)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);

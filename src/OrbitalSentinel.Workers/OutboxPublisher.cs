@@ -20,9 +20,10 @@ public sealed class OutboxPublisher(OutboxRepository outbox, IProducer<string, s
                     await KafkaTopics.EnsureAsync(options.Value, stoppingToken);
                     topicsReady = true;
                 }
-                // Lease one at a time; a sequential batch could expire while awaiting previous publications.
-                var messages = await outbox.ClaimAsync(1, TimeSpan.FromSeconds(60), stoppingToken);
-                foreach (var message in messages)
+                // Claims contain at most one event per partition key. Start every publication
+                // immediately so none of the leases waits behind a sequential batch.
+                var messages = await outbox.ClaimAsync(16, TimeSpan.FromSeconds(60), stoppingToken);
+                await Task.WhenAll(messages.Select(async message =>
                 {
                     try
                     {
@@ -40,7 +41,7 @@ public sealed class OutboxPublisher(OutboxRepository outbox, IProducer<string, s
                         logger.LogWarning(ex, "Outbox publication failed for {EventId}; attempt {RetryCount}", message.Id, message.RetryCount);
                         await outbox.MarkFailedAsync(message.Id, message.LeaseToken, ex.GetType().Name, stoppingToken);
                     }
-                }
+                }));
                 if (messages.Count == 0) await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }

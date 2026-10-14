@@ -205,16 +205,108 @@ public sealed class ConjunctionScannerTests
     }
 
     [Fact]
-    public void Screens_every_unique_pair_in_a_500_object_run()
+    public void Screens_every_unique_pair_beyond_the_previous_500_object_limit()
     {
-        var objects = Enumerable.Range(0, 500).Select(_ => Snapshot(Guid.NewGuid())).ToArray();
+        var objects = Enumerable.Range(0, 750).Select(_ => Snapshot(Guid.NewGuid())).ToArray();
         var indices = objects.Select((x, i) => (x.Object.Id, i)).ToDictionary(x => x.Id, x => x.i);
         var result = _scanner.Scan(Run() with { Objects = objects },
             new AnalyticPropagator((id, _) => (new(indices[id] * 200_000, 0, 0), new(0, 0, 0))));
-        Assert.Equal(124750, result.Metrics.PairCount);
+        Assert.Equal(750, result.Metrics.ObjectCount);
+        Assert.Equal(280875, result.Metrics.PairCount);
+        Assert.Equal(280875, result.Metrics.IntervalCount);
         Assert.Empty(result.Encounters);
-        Assert.Throws<ArgumentException>(() => ConjunctionScanner.ValidateRun(
-            Run() with { Objects = objects.Append(Snapshot(Guid.NewGuid())).ToArray() }));
+    }
+
+    [Fact]
+    public void Spatial_screening_matches_exhaustive_screening_for_curved_motion()
+    {
+        var random = new Random(42);
+        var objects = Enumerable.Range(0, 30).Select(_ => Snapshot(Guid.NewGuid())).ToArray();
+        var motions = objects.ToDictionary(o => o.Object.Id, _ =>
+            (x: random.NextDouble() * 2_000_000 - 1_000_000, speed: random.NextDouble() * 8000 - 4000,
+             y: random.NextDouble() * 20_000 - 10_000));
+        var propagator = new AnalyticPropagator((id, t) =>
+        {
+            var m = motions[id];
+            return (new(m.x + m.speed * t, m.y + 1000 * Math.Sin(t / 20), 0),
+                new(m.speed, 50 * Math.Cos(t / 20), 0));
+        });
+        var run = Run(180) with { Objects = objects };
+        var expected = _scanner.ScanExhaustive(run, propagator);
+        var actual = _scanner.Scan(run, propagator);
+        Assert.Equal(expected.Encounters, actual.Encounters);
+        Assert.Equal(expected.Metrics.CandidateCount, actual.Metrics.CandidateCount);
+        Assert.True(actual.Metrics.NarrowPhaseIntervalCount < actual.Metrics.IntervalCount);
+    }
+
+    [Fact]
+    public void Spatial_grid_keeps_long_tangents_and_negative_cell_boundary_encounters()
+    {
+        var run = Run(120);
+        var propagator = new AnalyticPropagator((id, t) => id == FirstId
+            ? (new(-500_000, -500_000, 0), new(0, 0, 0))
+            : (new(-500_000 + (t - 30) * 2_000_000, -499_900, 0), new(2_000_000, 0, 0)));
+        Assert.Equal(_scanner.ScanExhaustive(run, propagator).Encounters, _scanner.Scan(run, propagator).Encounters);
+    }
+
+    [Theory]
+    [InlineData(15.5)]
+    [InlineData(1.0027)]
+    public void Spatial_refinement_preserves_SGP4_results_with_interleaved_evaluator_times(double meanMotion)
+    {
+        var elements = ReferenceOrbit.Elements with
+        {
+            EpochUtc = Epoch, MeanMotionRevolutionsPerDay = meanMotion, Eccentricity = 0.001,
+            InclinationDegrees = 20, BStar = 0
+        };
+        var objects = Enumerable.Range(0, 8).Select(i => ReferenceOrbit.Snapshot(elements with
+        {
+            MeanAnomalyDegrees = 20 + i * 0.003,
+            RightAscensionDegrees = 45 + i * 0.004
+        }) with { Object = Snapshot(Guid.NewGuid()).Object }).ToArray();
+        var run = Run(14_400) with { Objects = objects };
+        var propagator = new Sgp4OrbitPropagator();
+        var expected = _scanner.ScanExhaustive(run, propagator);
+        var actual = _scanner.Scan(run, propagator);
+        Assert.NotEmpty(expected.Encounters);
+        Assert.Equal(expected.Metrics.CandidateCount, actual.Metrics.CandidateCount);
+        Assert.Equal(expected.Encounters.Count, actual.Encounters.Count);
+        foreach (var (before, after) in expected.Encounters.Zip(actual.Encounters))
+        {
+            Assert.Equal((before.PrimaryObjectId, before.SecondaryObjectId), (after.PrimaryObjectId, after.SecondaryObjectId));
+            Assert.InRange(Math.Abs((before.TimeOfClosestApproachUtc - after.TimeOfClosestApproachUtc).TotalSeconds), 0, 0.001);
+            Assert.InRange(Math.Abs(before.MissDistanceMeters - after.MissDistanceMeters), 0, 0.001);
+        }
+    }
+
+    [Fact]
+    public void Failed_real_objects_are_counted_and_removed_from_results_instead_of_hiding_partial_coverage()
+    {
+        var failedId = Guid.NewGuid();
+        var run = Run(120) with { Objects = [Snapshot(FirstId), Snapshot(SecondId), Snapshot(failedId)] };
+        var propagator = new AnalyticPropagator((id, t) =>
+        {
+            if (id == failedId && t >= 100) throw new OrbitPropagationException(id, Epoch.AddSeconds(t), "decayed");
+            return (new(id == FirstId ? 0 : id == SecondId ? 100 : 200, 0, 0), new(0, 0, 0));
+        });
+        var result = _scanner.Scan(run, propagator);
+        Assert.Equal(1, result.Metrics.UnpropagatedObjectCount);
+        Assert.Equal(3, result.Metrics.ObjectCount);
+        var encounter = Assert.Single(result.Encounters);
+        Assert.DoesNotContain(failedId, new[] { encounter.PrimaryObjectId, encounter.SecondaryObjectId });
+        Assert.Throws<OrbitPropagationException>(() => _scanner.Scan(run with { Source = "Simulation", ScenarioId = Guid.NewGuid() }, propagator));
+    }
+
+    [Fact]
+    public void Spatial_screening_handles_twenty_thousand_objects_without_testing_all_pair_intervals()
+    {
+        var objects = Enumerable.Range(0, 20_000).Select(_ => Snapshot(Guid.NewGuid())).ToArray();
+        var indices = objects.Select((o, i) => (o.Object.Id, i)).ToDictionary(x => x.Id, x => x.i);
+        var result = _scanner.Scan(Run() with { Objects = objects },
+            new AnalyticPropagator((id, _) => (new(indices[id] * 200_000d, 0, 0), new(0, 0, 0))));
+        Assert.Equal(199_990_000, result.Metrics.PairCount);
+        Assert.Equal(0, result.Metrics.NarrowPhaseIntervalCount);
+        Assert.Empty(result.Encounters);
     }
 
     [Fact]

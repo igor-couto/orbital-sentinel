@@ -1,4 +1,9 @@
-import type { CatalogPage, ObjectPosition, Trajectory } from "../domain/orbits";
+import type {
+  CatalogPage,
+  ObjectPosition,
+  OrbitSnapshot,
+  Trajectory,
+} from "../domain/orbits";
 
 export class ApiError extends Error {
   constructor(
@@ -188,11 +193,36 @@ async function readJson(response: Response): Promise<unknown> {
 }
 
 export async function getCatalog(signal: AbortSignal): Promise<CatalogPage> {
-  const response = await request(
-    "/api/orbital-objects?page=1&pageSize=500",
-    signal,
-  );
-  return parseCatalog(await readJson(response));
+  const loadPage = async (page: number, pageSize: number) => {
+    const response = await request(
+      `/api/orbital-objects?page=${page}&pageSize=${pageSize}`,
+      signal,
+    );
+    const result = parseCatalog(await readJson(response));
+    if (result.page !== page || result.items.length > result.pageSize)
+      return invalid();
+    return result;
+  };
+  const first = await loadPage(1, 500);
+  const objects = new Map<string, OrbitSnapshot>();
+  for (const item of first.items) objects.set(item.object.id, item);
+  // Keep HTTP pages bounded, but load the whole catalog. Pin the page count for
+  // this refresh so ingestion cannot extend it indefinitely while we fetch.
+  const pages = Math.ceil(first.totalCount / first.pageSize);
+  let totalCount = first.totalCount;
+  for (let page = 2; page <= pages; page++) {
+    const next = await loadPage(page, first.pageSize);
+    if (next.pageSize !== first.pageSize) return invalid();
+    for (const item of next.items) objects.set(item.object.id, item);
+    totalCount = next.totalCount;
+  }
+  // Updates between pages can move an object across a page boundary. Deduplicate
+  // its identity; the next scheduled refresh picks up concurrent additions.
+  return {
+    ...first,
+    totalCount: Math.max(totalCount, objects.size),
+    items: [...objects.values()],
+  };
 }
 
 export async function getPositions(

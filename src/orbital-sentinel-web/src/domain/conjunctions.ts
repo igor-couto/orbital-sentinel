@@ -10,6 +10,7 @@ export interface PredictionRun {
   predictionEndUtc: string;
   clockUtc: string;
   objectCount: number;
+  unpropagatedObjectCount?: number;
   error?: string | null;
 }
 export interface ConjunctionAssessment {

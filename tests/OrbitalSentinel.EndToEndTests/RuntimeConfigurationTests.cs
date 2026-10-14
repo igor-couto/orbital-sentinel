@@ -15,6 +15,7 @@ public sealed class RuntimeConfigurationTests
         var values = new Dictionary<string, string?>
         {
             ["ConnectionStrings:Postgres"] = "Host=localhost;Database=test;Username=postgres;Password=test",
+            ["CelesTrak:DiscoverPublicGroups"] = "false",
             ["CelesTrak:Groups:0"] = "stations",
             ["CelesTrak:Groups:1"] = "visual",
             ["CelesTrak:Groups:2"] = "iridium-33-debris"
@@ -28,7 +29,7 @@ public sealed class RuntimeConfigurationTests
     }
 
     [Fact]
-    public void MissingGroupsUseTheDocumentedThreeDefaults()
+    public void DefaultsDiscoverAllPublicGroupsWithAnUnlimitedCatalog()
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -38,6 +39,9 @@ public sealed class RuntimeConfigurationTests
 
         var options = services.GetRequiredService<IOptions<CelesTrakOptions>>().Value;
 
-        Assert.Equal(new[] { "stations", "visual", "iridium-33-debris" }, options.Groups);
+        Assert.True(options.DiscoverPublicGroups);
+        Assert.Equal(CelesTrakGroups.Published, options.Groups);
+        Assert.Equal(0, options.MaxObjects);
+        Assert.False(services.GetRequiredService<IOptions<PredictionOptions>>().Value.PrecomputeTrajectories);
     }
 }

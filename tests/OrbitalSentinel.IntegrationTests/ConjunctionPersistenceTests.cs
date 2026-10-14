@@ -43,6 +43,38 @@ public sealed class ConjunctionPersistenceTests(PostgresFixture fixture) : IAsyn
     }
 
     [Fact]
+    public async Task Real_run_persists_every_object_beyond_the_previous_500_object_limit()
+    {
+        var catalog = new CatalogRepository(fixture.DataSource);
+        for (var index = 1; index <= 505; index++)
+            await catalog.UpsertAsync(Import(Guid.NewGuid(), index));
+        var run = await Repository.CreateRealRunAsync(Epoch, TimeSpan.FromHours(24),
+            TimeSpan.FromSeconds(60), new ConjunctionSettings(), "real:unlimited");
+        Assert.NotNull(run);
+        Assert.Equal(505, run.Context.Objects.Count);
+        var persisted = await Repository.GetRunAsync(run.Id);
+        Assert.Equal(505, persisted!.Context.Objects.Count);
+        Assert.Equal(505, persisted.Context.Objects.Select(x => x.Object.Id).Distinct().Count());
+    }
+
+    [Fact]
+    public async Task Valid_completed_screening_remains_available_while_a_newer_run_is_pending_but_expired_results_do_not()
+    {
+        var catalog = new CatalogRepository(fixture.DataSource);
+        await catalog.UpsertAsync(Import(PrimaryId, 1));
+        await catalog.UpsertAsync(Import(SecondaryId, 2));
+        var first = (await Repository.CreateRealRunAsync(Epoch, TimeSpan.FromHours(24),
+            TimeSpan.FromSeconds(60), new ConjunctionSettings(), "first"))!;
+        await Repository.TryEnqueueScanAsync(await CompletedEvent(first.Id));
+        var lease = (await Repository.ClaimAsync(TimeSpan.FromMinutes(1)))!;
+        Assert.True(await Repository.CompleteScanAsync(lease, Result()));
+        await Repository.CreateRealRunAsync(Epoch.AddHours(1), TimeSpan.FromHours(24),
+            TimeSpan.FromSeconds(60), new ConjunctionSettings(), "next");
+        Assert.Equal(first.Id, (await Repository.GetLatestCompletedRealRunAsync(Epoch.AddHours(2)))!.Id);
+        Assert.Null(await Repository.GetLatestCompletedRealRunAsync(Epoch.AddDays(2)));
+    }
+
+    [Fact]
     public async Task Run_creation_rolls_back_manifest_and_scope_when_outbox_fails()
     {
         await ForceOutboxFailure();
@@ -215,6 +247,39 @@ public sealed class ConjunctionPersistenceTests(PostgresFixture fixture) : IAsyn
         Assert.Null(failed.Metrics);
         Assert.Equal("Propagation failed", failed.LastError);
         Assert.Null(await Repository.ClaimAsync(TimeSpan.FromMinutes(1)));
+    }
+
+    [Fact]
+    public async Task Lease_heartbeat_can_continue_while_assessment_publication_is_in_progress()
+    {
+        var lease = await CreateAndClaim("slow-publication");
+        await using var gate = await fixture.DataSource.OpenConnectionAsync();
+        await using var transaction = await gate.BeginTransactionAsync();
+        await gate.ExecuteAsync("LOCK TABLE conjunctions IN SHARE MODE;", transaction: transaction);
+        var publication = Repository.CompleteScanAsync(lease, Result(Encounter(10)));
+        try
+        {
+            var blocked = false;
+            for (var attempt = 0; attempt < 100 && !blocked; attempt++)
+            {
+                blocked = await Scalar<bool>("""
+                    SELECT EXISTS(SELECT 1 FROM pg_stat_activity
+                        WHERE datname=current_database() AND wait_event_type='Lock'
+                        AND query LIKE 'INSERT INTO conjunctions%');
+                    """);
+                if (!blocked) await Task.Delay(20);
+            }
+            Assert.True(blocked, "Publication must hold its run lock before checking the heartbeat.");
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            Assert.True(await Repository.RenewAsync(lease, TimeSpan.FromMinutes(1), timeout.Token));
+        }
+        finally
+        {
+            await transaction.RollbackAsync();
+            await publication;
+        }
+        Assert.True(await publication);
+        Assert.Equal("Completed", (await Repository.GetRunAsync(lease.Run.Id))!.Status);
     }
 
     [Fact]
