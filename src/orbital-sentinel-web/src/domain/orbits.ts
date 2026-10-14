@@ -48,7 +48,13 @@ export interface TrajectoryPoint {
   altitudeKilometers?: number | null;
   speedKilometersPerSecond?: number | null;
   velocityEcefMetersPerSecond?: EcefPosition | null;
+  orbitView?: {
+    positionMeters: EcefPosition;
+    velocityMetersPerSecond?: EcefPosition | null;
+    rotationToEarthFixedRadians: number;
+  } | null;
 }
+export type PathView = "earth-relative" | "orbit";
 export interface ObjectPosition extends TrajectoryPoint {
   orbitalObjectId: string;
 }
@@ -115,11 +121,8 @@ export function elementAge(
   return { label: `${Math.floor(age / 24)}d old`, stale: true };
 }
 
-/** Use backend velocity derivatives when present; older persisted paths remain linear. */
-export function interpolatePosition(
-  trajectory: Trajectory,
-  timestamp: number,
-): EcefPosition | undefined {
+/** Find bracketing samples without extrapolating outside the prediction window. */
+export function trajectoryInterval(trajectory: Trajectory, timestamp: number) {
   const points = trajectory.points;
   if (
     !points.length ||
@@ -136,20 +139,47 @@ export function interpolatePosition(
   }
   const right = points[low];
   if (low === 0 || Date.parse(right.timestampUtc) === timestamp)
-    return right.positionEcefMeters;
+    return { left: right, right, fraction: 0, seconds: 0 };
   const left = points[low - 1];
   const fraction =
     (timestamp - Date.parse(left.timestampUtc)) /
     (Date.parse(right.timestampUtc) - Date.parse(left.timestampUtc));
-  if (left.velocityEcefMetersPerSecond && right.velocityEcefMetersPerSecond) {
-    const w = hermiteWeights(
-      fraction,
+  return {
+    left,
+    right,
+    fraction,
+    seconds:
       (Date.parse(right.timestampUtc) - Date.parse(left.timestampUtc)) / 1000,
-    );
-    const a = left.positionEcefMeters,
-      b = right.positionEcefMeters;
-    const va = left.velocityEcefMetersPerSecond,
-      vb = right.velocityEcefMetersPerSecond;
+  };
+}
+
+/** Interpolate backend geometry; older persisted paths without velocity remain linear. */
+export function interpolatePosition(
+  trajectory: Trajectory,
+  timestamp: number,
+  view: PathView = "earth-relative",
+): EcefPosition | undefined {
+  const interval = trajectoryInterval(trajectory, timestamp);
+  if (!interval) return undefined;
+  const { left, right, fraction, seconds } = interval;
+  const a =
+    view === "orbit" ? left.orbitView?.positionMeters : left.positionEcefMeters;
+  const b =
+    view === "orbit"
+      ? right.orbitView?.positionMeters
+      : right.positionEcefMeters;
+  if (!a || !b) return undefined;
+  if (!seconds) return a;
+  const va =
+    view === "orbit"
+      ? left.orbitView?.velocityMetersPerSecond
+      : left.velocityEcefMetersPerSecond;
+  const vb =
+    view === "orbit"
+      ? right.orbitView?.velocityMetersPerSecond
+      : right.velocityEcefMetersPerSecond;
+  if (va && vb) {
+    const w = hermiteWeights(fraction, seconds);
     return {
       x: w[0] * a.x + w[1] * va.x + w[2] * b.x + w[3] * vb.x,
       y: w[0] * a.y + w[1] * va.y + w[2] * b.y + w[3] * vb.y,
@@ -157,15 +187,9 @@ export function interpolatePosition(
     };
   }
   return {
-    x:
-      left.positionEcefMeters.x +
-      fraction * (right.positionEcefMeters.x - left.positionEcefMeters.x),
-    y:
-      left.positionEcefMeters.y +
-      fraction * (right.positionEcefMeters.y - left.positionEcefMeters.y),
-    z:
-      left.positionEcefMeters.z +
-      fraction * (right.positionEcefMeters.z - left.positionEcefMeters.z),
+    x: a.x + fraction * (b.x - a.x),
+    y: a.y + fraction * (b.y - a.y),
+    z: a.z + fraction * (b.z - a.z),
   };
 }
 

@@ -88,6 +88,7 @@ public sealed class EventPipelineTests : IAsyncLifetime
         Assert.Equal(id, Assert.Single(motion!.Objects).OrbitalObjectId);
         Assert.Equal(30, motion.Objects[0].States.Length);
         Assert.All(path.Points, p => Assert.NotNull(p.VelocityEcefMetersPerSecond));
+        Assert.All(path.Points, p => Assert.NotNull(p.OrbitView));
         // Concurrent viewers share the same generated buffer, including its identity.
         var copies = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => client.GetFromJsonAsync<CatalogMotion>("/api/orbital-objects/motion")));
         Assert.All(copies, copy => Assert.Equal(copies[0]!.Id, copy!.Id));
@@ -168,6 +169,7 @@ public sealed class EventPipelineTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health/ready")).StatusCode);
         var returned = await client.GetFromJsonAsync<Trajectory>($"/api/orbital-objects/{id}/trajectory");
         Assert.Equal(id, returned!.OrbitalObjectId);
+        Assert.All(returned.Points, point => Assert.NotNull(point.OrbitView));
         Assert.All(returned.Points, point => Assert.InRange(point.SpeedKilometersPerSecond!.Value, 7, 8));
         var details = await client.GetFromJsonAsync<JsonElement>($"/api/orbital-objects/{id}/details");
         Assert.Equal(id, details.GetProperty("orbitalObjectId").GetGuid());

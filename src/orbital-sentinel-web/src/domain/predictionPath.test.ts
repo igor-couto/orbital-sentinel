@@ -18,6 +18,61 @@ const trajectory: Trajectory = {
 };
 
 describe("selected prediction path", () => {
+  const radius = 42_164_000;
+  const stationary: Trajectory = {
+    ...trajectory,
+    points: trajectory.points.map((point, i) => {
+      const angle = (i / 1440) * 2 * Math.PI,
+        rate = (2 * Math.PI) / 86400;
+      return {
+        ...point,
+        positionEcefMeters: { x: radius, y: 0, z: 0 },
+        velocityEcefMetersPerSecond: { x: 0, y: 0, z: 0 },
+        orbitView: {
+          positionMeters: {
+            x: radius * Math.cos(angle),
+            y: radius * Math.sin(angle),
+            z: 0,
+          },
+          velocityMetersPerSecond: {
+            x: -radius * rate * Math.sin(angle),
+            y: radius * rate * Math.cos(angle),
+            z: 0,
+          },
+          rotationToEarthFixedRadians: -angle,
+        },
+      };
+    }),
+  };
+
+  it("shows a stationary geosynchronous path and a surrounding orbit from the same backend geometry", () => {
+    const relative = predictionPath(stationary, start, 1440, "earth-relative");
+    expect(relative.every((p) => p.x === radius && p.y === 0)).toBe(true);
+    const orbit = predictionPath(stationary, start, 1440, "orbit");
+    expect(orbit[360].y).toBeCloseTo(radius, 6);
+    expect(orbit[720].x).toBeCloseTo(-radius, 6);
+    expect(orbit[1080].y).toBeCloseTo(-radius, 6);
+    expect(orbit[0]).toEqual(relative[0]);
+  });
+
+  it("rotates the whole orbit with the displayed time and keeps its head on the selected position", () => {
+    for (const seconds of [0, 33, 21600, 86367]) {
+      const time = start + seconds * 1000;
+      const first = predictionPath(stationary, time, 1440, "orbit")[0];
+      expect(first.x).toBeCloseTo(radius, 3);
+      expect(first.y).toBeCloseTo(0, 3);
+      expect(first.z).toBe(0);
+    }
+  });
+
+  it("never substitutes Earth-relative geometry for an unavailable orbit or extrapolates an orbit", () => {
+    expect(predictionPath(trajectory, start, 90, "orbit")).toEqual([]);
+    expect(predictionPath(stationary, start - 1, 1440, "orbit")).toEqual([]);
+    expect(
+      predictionPath(stationary, start + 24 * hour + 1, 1440, "orbit"),
+    ).toEqual([]);
+  });
+
   it("shows a full 15-hour period instead of the previous three-hour cutoff", () => {
     const period = 1440 / 1.5751094; // 2026-167A, the reported object.
     const now = start + 15_000;

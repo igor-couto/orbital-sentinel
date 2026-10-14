@@ -139,7 +139,7 @@ api.MapGet("/orbital-objects/{id:guid}/trajectory", async (Guid id, CatalogRepos
         return Results.Json(new { status = "pending" }, statusCode: 202);
     }
     context.Response.Headers.CacheControl = "private, max-age=30";
-    return Results.Ok(trajectory);
+    return Results.Ok(CatalogVisualization.PrepareTrajectory(trajectory));
 }).WithName("GetTrajectory");
 
 api.MapConjunctionEndpoints();

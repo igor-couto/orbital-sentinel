@@ -62,6 +62,37 @@ const trajectory = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("orbital API boundary", () => {
+  it("accepts complete orbit geometry and rejects partial or invalid display orientations", () => {
+    const view = {
+      positionMeters: { x: 7e6, y: 0, z: 0 },
+      velocityMetersPerSecond: null,
+      rotationToEarthFixedRadians: 0,
+    };
+    const valid = {
+      ...trajectory,
+      points: trajectory.points.map((p) => ({ ...p, orbitView: view })),
+    };
+    expect(parseTrajectory(valid, objectId)).toEqual(valid);
+    for (const invalidView of [
+      { ...view, rotationToEarthFixedRadians: NaN },
+      { ...view, positionMeters: { x: 1 } },
+    ])
+      expect(() =>
+        parseTrajectory(
+          {
+            ...valid,
+            points: valid.points.map((p) => ({ ...p, orbitView: invalidView })),
+          },
+          objectId,
+        ),
+      ).toThrow();
+    expect(() =>
+      parseTrajectory(
+        { ...valid, points: [valid.points[0], trajectory.points[1]] },
+        objectId,
+      ),
+    ).toThrow();
+  });
   it("loads every catalog page, including objects beyond the first 500", async () => {
     const items = Array.from({ length: 1205 }, (_, index) => ({
       ...catalog.items[0],

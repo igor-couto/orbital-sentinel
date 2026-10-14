@@ -15,7 +15,14 @@ public sealed record StateVector(
 /// </summary>
 public sealed record VisualizationPoint(DateTimeOffset TimestampUtc, CartesianVector PositionEcefMeters,
     double? AltitudeKilometers = null, double? SpeedKilometersPerSecond = null,
-    CartesianVector? VelocityEcefMetersPerSecond = null);
+    CartesianVector? VelocityEcefMetersPerSecond = null, OrbitViewPoint? OrbitView = null);
+
+/// <summary>
+/// Orbit geometry in axes aligned with Earth at the trajectory start, with the backend-computed
+/// rotation to display the whole orbit in Earth-fixed axes at this sample's time. Radians are unwrapped.
+/// </summary>
+public sealed record OrbitViewPoint(CartesianVector PositionMeters, CartesianVector? VelocityMetersPerSecond,
+    double RotationToEarthFixedRadians);
 
 /// <summary>Uniform samples packed as x,y,z,vx,vy,vz in Earth-fixed metres and metres/second.</summary>
 public sealed record ObjectMotion(Guid OrbitalObjectId, long OrbitVersion, double[] States);

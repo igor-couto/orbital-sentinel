@@ -29,6 +29,8 @@ const invalid = (): never => {
     502,
   );
 };
+const isVector = (value: unknown): boolean =>
+  isRecord(value) && ["x", "y", "z"].every((axis) => isNumber(value[axis]));
 
 function validPoint(value: unknown): boolean {
   if (
@@ -54,7 +56,13 @@ function validPoint(value: unknown): boolean {
               axis
             ],
           ),
-        )))
+        ))) &&
+    (value.orbitView == null ||
+      (isRecord(value.orbitView) &&
+        isVector(value.orbitView.positionMeters) &&
+        (value.orbitView.velocityMetersPerSecond == null ||
+          isVector(value.orbitView.velocityMetersPerSecond)) &&
+        isNumber(value.orbitView.rotationToEarthFixedRadians)))
   );
 }
 
@@ -144,6 +152,8 @@ export function parseTrajectory(value: unknown, objectId: string): Trajectory {
     return invalid();
   const points = value.points as Trajectory["points"];
   if (
+    (points.some((point) => point.orbitView != null) &&
+      !points.every((point) => point.orbitView != null)) ||
     Date.parse(value.startUtc) !== Date.parse(points[0].timestampUtc) ||
     Date.parse(value.endUtc) !==
       Date.parse(points[points.length - 1].timestampUtc) ||

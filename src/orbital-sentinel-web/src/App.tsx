@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Globe } from "./components/Globe";
 import { Icon } from "./components/Icon";
 import { formatUtc, interpolatePosition, objectKind } from "./domain/orbits";
-import type { ObjectKind, OrbitSnapshot } from "./domain/orbits";
+import type { ObjectKind, OrbitSnapshot, PathView } from "./domain/orbits";
 import { motionCovers } from "./domain/motion";
 import { useSelectedTrajectory, useTrafficData } from "./hooks/useTrafficData";
 import { useConjunctions } from "./hooks/useConjunctions";
@@ -29,6 +29,7 @@ export function App() {
   const [filter, setFilter] = useState<"all" | ObjectKind>("all");
   const [previewTime, setPreviewTime] = useState<number | null>(null);
   const [showTrajectory, setShowTrajectory] = useState(true);
+  const [pathView, setPathView] = useState<PathView>("orbit");
   const [workspace, setWorkspace] = useState<"catalog" | "conjunctions">(
     "catalog",
   );
@@ -49,6 +50,9 @@ export function App() {
     data.revision,
   );
   const trajectory = encounter?.primaryTrajectory ?? trajectoryState.value;
+  const orbitViewAvailable = Boolean(trajectory?.points[0]?.orbitView);
+  const displayedPathView =
+    !encounter && orbitViewAvailable ? pathView : "earth-relative";
   const timestamp =
     previewTime ??
     (encounter ? Date.parse(encounter.timeOfClosestApproachUtc) : now);
@@ -361,6 +365,35 @@ export function App() {
               </div>
               <span className="coordinate-label">EARTH-FIXED / METRES</span>
             </div>
+            {!encounter && (
+              <div
+                className="path-view-toggle"
+                role="group"
+                aria-label="Predicted path view"
+              >
+                <button
+                  type="button"
+                  aria-pressed={displayedPathView === "orbit"}
+                  disabled={!orbitViewAvailable}
+                  title={
+                    orbitViewAvailable
+                      ? "Orbital shape around Earth, oriented to the displayed time"
+                      : "Available when the selected object's prediction loads"
+                  }
+                  onClick={() => setPathView("orbit")}
+                >
+                  Orbit around Earth
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={displayedPathView === "earth-relative"}
+                  title="Predicted motion relative to the rotating Earth"
+                  onClick={() => setPathView("earth-relative")}
+                >
+                  Earth-relative path
+                </button>
+              </div>
+            )}
             <Globe
               objects={objects}
               motion={motion}
@@ -369,6 +402,7 @@ export function App() {
               timestamp={timestamp}
               preview={previewTime !== null}
               showTrajectory={showTrajectory}
+              pathView={displayedPathView}
               onSelect={selectObject}
               encounter={encounter}
               focusRequest={focusRequest}
@@ -585,10 +619,11 @@ export function App() {
                             <span className="toggle-track" aria-hidden="true" />
                           </label>
                           <p className="prediction-help">
-                            Path shows one orbital period ahead, or the
-                            remaining prediction window. Earth rotates beneath
-                            the orbit, so this Earth-fixed path does not form a
-                            closed loop.
+                            {displayedPathView === "orbit"
+                              ? "Shows the orbit’s shape around Earth, oriented to the displayed time."
+                              : "Shows motion relative to the rotating Earth. Geosynchronous objects can trace a small loop."}{" "}
+                            Both views cover one orbital period ahead, or the
+                            remaining prediction window.
                           </p>
                           {predictionExpired && (
                             <p className="notice warning">

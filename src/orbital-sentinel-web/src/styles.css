@@ -768,6 +768,43 @@ main {
   flex-direction: column;
   gap: 8px;
 }
+.path-view-toggle {
+  position: absolute;
+  top: 70px;
+  left: 20px;
+  z-index: 2;
+  display: flex;
+  max-width: calc(100% - 90px);
+  padding: 3px;
+  gap: 3px;
+  border: 1px solid #293b49;
+  border-radius: 6px;
+  background: #0d1621e8;
+}
+.path-view-toggle button {
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #a5b8c9;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.35;
+  cursor: pointer;
+}
+.path-view-toggle button[aria-pressed="true"] {
+  background: #193b32;
+  border-color: #305b4d;
+  color: #b9f7dc;
+}
+.path-view-toggle button:focus-visible {
+  outline: 2px solid #76e3b6;
+  outline-offset: 2px;
+}
+.path-view-toggle button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
 .globe-controls .icon-button {
   background: #111c28d9;
 }

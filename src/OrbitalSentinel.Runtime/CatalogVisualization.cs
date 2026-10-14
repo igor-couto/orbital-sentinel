@@ -83,11 +83,15 @@ public sealed class CatalogVisualization(CatalogRepository catalog, IOrbitPropag
             if (paths.TryGetValue<Trajectory>(key, out var cached)) return cached!;
             var trajectory = propagator.Predict(orbit, start, TimeSpan.FromHours(options.Value.HorizonHours),
                 TimeSpan.FromSeconds(options.Value.StepSeconds), ct);
+            trajectory = PrepareTrajectory(trajectory);
             paths.Set(key, trajectory, new MemoryCacheEntryOptions { Size = 1, AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(2) });
             return trajectory;
         }
         finally { trajectoryGate.Release(); }
     }
+
+    /// <summary>Prepare either an on-demand or stored path for both visualization views.</summary>
+    public static Trajectory PrepareTrajectory(Trajectory trajectory) => OrbitViewGeometry.AddTo(trajectory);
 
     public void Dispose() { paths.Dispose(); positionsGate.Dispose(); trajectoryGate.Dispose(); motionGate.Dispose(); }
 }

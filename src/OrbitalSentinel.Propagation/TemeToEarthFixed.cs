@@ -37,6 +37,13 @@ public static class TemeToEarthFixed
 
     public static double GreenwichMeanSiderealTimeRadians(DateTimeOffset timestampUtc)
     {
+        var radians = UnwrappedGmstRadians(timestampUtc) % (2 * Math.PI);
+        return radians < 0 ? radians + 2 * Math.PI : radians;
+    }
+
+    // Keeping complete turns lets display orientations interpolate across midnight and 2π.
+    internal static double UnwrappedGmstRadians(DateTimeOffset timestampUtc)
+    {
         // JD at Unix epoch is exact; UTC ticks retain sub-second precision before conversion.
         var daysSinceJ2000 = (timestampUtc.UtcTicks - DateTimeOffset.UnixEpoch.UtcTicks) /
             (double)TimeSpan.TicksPerDay + 2440587.5 - 2451545.0;
@@ -44,7 +51,6 @@ public static class TemeToEarthFixed
         var seconds = 67310.54841 + (876600.0 * 3600 + 8640184.812866) * centuries
             + 0.093104 * centuries * centuries
             - 6.2e-6 * centuries * centuries * centuries;
-        var radians = seconds * (Math.PI / 43200.0) % (2 * Math.PI);
-        return radians < 0 ? radians + 2 * Math.PI : radians;
+        return seconds * (Math.PI / 43200.0);
     }
 }

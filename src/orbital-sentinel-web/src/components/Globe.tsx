@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type * as Cesium from "cesium";
 import { interpolatePosition } from "../domain/orbits";
-import type { OrbitSnapshot, Trajectory } from "../domain/orbits";
+import type { OrbitSnapshot, PathView, Trajectory } from "../domain/orbits";
 import { Icon } from "./Icon";
 import type { ConjunctionVisualization } from "../domain/conjunctions";
 import { reconcileGlobeEntities } from "./globeEntities";
@@ -25,6 +25,7 @@ interface Props {
   timestamp: number;
   preview: boolean;
   showTrajectory: boolean;
+  pathView: PathView;
   onSelect: (id: string) => void;
   encounter?: ConjunctionVisualization | null;
   focusRequest?: number;
@@ -38,6 +39,7 @@ export function Globe({
   timestamp,
   preview,
   showTrajectory,
+  pathView,
   onSelect,
   encounter,
   focusRequest,
@@ -51,6 +53,7 @@ export function Globe({
     timestamp,
     preview,
     showTrajectory,
+    pathView,
     encounter,
   });
   frameState.current = {
@@ -59,6 +62,7 @@ export function Globe({
     timestamp,
     preview,
     showTrajectory,
+    pathView,
     encounter,
   };
   const predictionLine = useRef<ReturnType<typeof createLivePolyline> | null>(
@@ -113,7 +117,7 @@ export function Globe({
       viewer.scene.globe.baseColor = C.Color.fromCssColorString("#152b3c");
       viewer.scene.globe.enableLighting = false;
       viewer.scene.globe.showGroundAtmosphere = true;
-      viewer.scene.screenSpaceCameraController.minimumZoomDistance = 7_000_000;
+      viewer.scene.screenSpaceCameraController.minimumZoomDistance = 4_000_000;
       viewer.scene.screenSpaceCameraController.maximumZoomDistance = 150_000_000;
       viewer.resolutionScale = Math.min(window.devicePixelRatio, 1.5);
       viewer.camera.setView({
@@ -186,6 +190,7 @@ export function Globe({
                   state.trajectory,
                   time,
                   1440 / state.selected.elements.meanMotionRevolutionsPerDay,
+                  state.pathView,
                 ).map((p) => new C.Cartesian3(p.x, p.y, p.z))
               : [];
           // The line and selected marker use exactly the same displayed position.
@@ -431,7 +436,7 @@ export function Globe({
     const C = window.Cesium;
     if (!ready || !viewer || !C) return;
     viewer.scene.requestRender();
-  }, [ready, timestamp, preview, showTrajectory, encounter]);
+  }, [ready, timestamp, preview, showTrajectory, pathView, encounter]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
