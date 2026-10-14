@@ -39,20 +39,7 @@ Altitude is WGS84 geodetic height and speed is the magnitude of the SGP4 TEME ve
 
 The implemented stack is .NET 10/C#/ASP.NET Core, Dapper/Npgsql, PostgreSQL 17, Apache Kafka, SGP.NET, React/TypeScript, CesiumJS, SignalR, and Docker Compose. xUnit and Testcontainers verify the backend. Vitest verifies browser data handling.
 
-```mermaid
-flowchart LR
-    C[CelesTrak OMM JSON] --> I[Ingestion worker]
-    I -->|orbit revision; event when precomputation enabled| DB[(PostgreSQL)]
-    DB --> O[Outbox publisher]
-    O -->|OrbitUpdated / PredictionRunCompleted| K[(Kafka)]
-    K --> J[Durable conjunction jobs]
-    J --> S[SGP4 spatial screening worker]
-    S -->|assessments + events| DB
-    K --> P[Optional trajectory precomputation]
-    P -->|atomic cache + inbox + event| DB
-    DB --> A[REST API + cached SGP4 visualization]
-    A --> UI[React + Cesium]
-```
+![Architecture Diagram](docs/diagram.png)
 
 ## Orbital processing
 
