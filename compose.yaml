@@ -9,6 +9,7 @@ x-app-environment: &app-environment
   CelesTrak__RequestIntervalMinutes: 120
   Prediction__HorizonHours: 24
   Prediction__StepSeconds: 60
+  Prediction__PrecomputeTrajectories: ${PRECOMPUTE_TRAJECTORIES:-false}
 
 services:
   postgres:

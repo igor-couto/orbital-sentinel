@@ -31,16 +31,16 @@ public sealed class ConjunctionPipelineTests
         await using var dataSource = NpgsqlDataSource.Create(database.GetConnectionString());
         await new DatabaseMigrator(dataSource).MigrateAsync();
         var kafkaOptions = new KafkaOptions { BootstrapServers = kafka.GetBootstrapAddress() };
-        await KafkaTopics.EnsureAsync(kafkaOptions, CancellationToken.None);
+        await KafkaTopics.EnsureAsync(kafkaOptions, false, CancellationToken.None);
         using var producer = new ProducerBuilder<string, string>(new ProducerConfig
         {
             BootstrapServers = kafkaOptions.BootstrapServers, EnableIdempotence = true, Acks = Acks.All
         }).Build();
         var repository = new ConjunctionRepository(dataSource);
-        using var publisher = new OutboxPublisher(new OutboxRepository(dataSource), producer,
-            Options.Create(kafkaOptions), NullLogger<OutboxPublisher>.Instance);
+        using var publisher = new OutboxPublisher(new OutboxRepository(dataSource, publishTrajectories: false), producer,
+            Options.Create(kafkaOptions), Options.Create(new PredictionOptions()), NullLogger<OutboxPublisher>.Instance);
         using var consumer = new PredictionRunConsumer(repository, new ConsumerFailureRepository(dataSource),
-            Options.Create(kafkaOptions), NullLogger<PredictionRunConsumer>.Instance);
+            Options.Create(kafkaOptions), Options.Create(new PredictionOptions()), NullLogger<PredictionRunConsumer>.Instance);
         using var worker = new ConjunctionWorker(repository, new ConjunctionScanner(), new Sgp4OrbitPropagator(),
             Options.Create(new ConjunctionOptions()), NullLogger<ConjunctionWorker>.Instance);
         await publisher.StartAsync(CancellationToken.None);
@@ -52,6 +52,7 @@ public sealed class ConjunctionPipelineTests
             {
                 builder.UseSetting("ConnectionStrings:Postgres", database.GetConnectionString());
                 builder.UseSetting("Kafka:BootstrapServers", kafkaOptions.BootstrapServers);
+                builder.UseSetting("Prediction:PrecomputeTrajectories", "false");
             });
             using var client = factory.CreateClient();
             var missingKey = await client.PostAsync("/api/simulations", null);
@@ -121,6 +122,13 @@ public sealed class ConjunctionPipelineTests
             Assert.Empty(real.Items);
             var history = await repository.ListAssessmentsAsync(first.Items[0].Id);
             Assert.Equal(2, history.TotalCount);
+            using var admin = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = kafkaOptions.BootstrapServers }).Build();
+            var topics = admin.GetMetadata(TimeSpan.FromSeconds(10)).Topics.Select(x => x.Topic).ToArray();
+            Assert.DoesNotContain(kafkaOptions.OrbitTopic, topics);
+            Assert.DoesNotContain(kafkaOptions.TrajectoryTopic, topics);
+            Assert.Contains(kafkaOptions.PredictionRunTopic, topics);
+            Assert.Contains(kafkaOptions.ConjunctionTopic, topics);
+            Assert.Contains(kafkaOptions.DeadLetterTopic, topics);
             foreach (var query in new[] { "page=0", "pageSize=101", "source=invalid", "maxMissDistanceMeters=NaN", "from=not-a-date", "objectId=invalid" })
                 Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/api/conjunctions?" + query)).StatusCode);
         }

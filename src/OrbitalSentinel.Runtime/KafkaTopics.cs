@@ -6,13 +6,15 @@ namespace OrbitalSentinel.Runtime;
 
 public static class KafkaTopics
 {
-    public static async Task EnsureAsync(KafkaOptions options, CancellationToken cancellationToken)
+    public static async Task EnsureAsync(KafkaOptions options, bool precomputeTrajectories, CancellationToken cancellationToken)
     {
+        string[] topics = precomputeTrajectories
+            ? [options.OrbitTopic, options.TrajectoryTopic, options.DeadLetterTopic, options.PredictionRunTopic, options.ConjunctionTopic]
+            : [options.DeadLetterTopic, options.PredictionRunTopic, options.ConjunctionTopic];
         using var admin = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = options.BootstrapServers }).Build();
         try
         {
-            await admin.CreateTopicsAsync(new[] { options.OrbitTopic, options.TrajectoryTopic, options.DeadLetterTopic,
-                    options.PredictionRunTopic, options.ConjunctionTopic }
+            await admin.CreateTopicsAsync(topics
                 .Select(name => new TopicSpecification
                 {
                     Name = name,

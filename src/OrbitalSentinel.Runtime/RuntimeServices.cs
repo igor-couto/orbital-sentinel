@@ -19,7 +19,8 @@ public static class RuntimeServices
             ?? throw new InvalidOperationException("ConnectionStrings:Postgres must be configured.");
         services.AddSingleton(NpgsqlDataSource.Create(connectionString));
         services.AddSingleton<DatabaseMigrator>();
-        services.AddSingleton<CatalogRepository>();
+        services.AddSingleton(sp => new CatalogRepository(sp.GetRequiredService<NpgsqlDataSource>(),
+            sp.GetRequiredService<IOptions<PredictionOptions>>().Value.PrecomputeTrajectories));
         services.AddSingleton<CatalogMetadataRepository>();
         services.AddOptions<SatelliteCatalogOptions>().Bind(configuration.GetSection("SatelliteCatalog"))
             .Validate(x => x.RequestIntervalMinutes >= 120, "SATCAT polling must be at least 120 minutes apart.")
@@ -32,7 +33,8 @@ public static class RuntimeServices
             client.DefaultRequestHeaders.UserAgent.ParseAdd("OrbitalSentinel/0.1 (educational-orbit-viewer)");
         });
         services.AddSingleton<TrajectoryRepository>();
-        services.AddSingleton<OutboxRepository>();
+        services.AddSingleton(sp => new OutboxRepository(sp.GetRequiredService<NpgsqlDataSource>(),
+            sp.GetRequiredService<IOptions<PredictionOptions>>().Value.PrecomputeTrajectories));
         services.AddSingleton<ConsumerFailureRepository>();
         services.AddSingleton<JobScheduleRepository>();
         services.AddSingleton<ConjunctionRepository>();

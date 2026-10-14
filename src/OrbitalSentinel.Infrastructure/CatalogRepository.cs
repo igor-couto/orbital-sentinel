@@ -5,7 +5,7 @@ using OrbitalSentinel.Core;
 
 namespace OrbitalSentinel.Infrastructure;
 
-public sealed class CatalogRepository(NpgsqlDataSource dataSource)
+public sealed class CatalogRepository(NpgsqlDataSource dataSource, bool publishOrbitEvents = true)
 {
     private const string SelectSnapshot = """
         SELECT o.id AS Id, o.norad_catalog_id AS NoradCatalogId, o.name AS Name,
@@ -71,7 +71,8 @@ public sealed class CatalogRepository(NpgsqlDataSource dataSource)
                 """, new { id, version, epoch = import.Elements.EpochUtc.ToUniversalTime(),
                     elements = JsonSerializer.Serialize(import.Elements, Serialization.Options), fingerprint }, transaction,
                 cancellationToken: cancellationToken));
-            await OutboxWriter.AppendAsync(connection, transaction, OrbitUpdatedEvent.Create(id, version), cancellationToken);
+            if (publishOrbitEvents)
+                await OutboxWriter.AppendAsync(connection, transaction, OrbitUpdatedEvent.Create(id, version), cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
         return changed;
@@ -121,6 +122,7 @@ public sealed class CatalogRepository(NpgsqlDataSource dataSource)
 
     public async Task<int> EnqueueRefreshAsync(DateTimeOffset beforeUtc, CancellationToken cancellationToken = default)
     {
+        if (!publishOrbitEvents) return 0;
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         var objects = await connection.QueryAsync<RefreshRow>(new CommandDefinition("""

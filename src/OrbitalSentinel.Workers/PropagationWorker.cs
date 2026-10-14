@@ -16,12 +16,13 @@ public sealed class PropagationWorker(CatalogRepository catalog, TrajectoryRepos
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (!prediction.Value.PrecomputeTrajectories) return;
         while (!stoppingToken.IsCancellationRequested)
         {
             using var consumer = KafkaTopics.CreateConsumer(kafka.Value, kafka.Value.PropagationGroup, AutoOffsetReset.Earliest);
             try
             {
-                await KafkaTopics.EnsureAsync(kafka.Value, stoppingToken);
+                await KafkaTopics.EnsureAsync(kafka.Value, true, stoppingToken);
                 consumer.Subscribe(kafka.Value.OrbitTopic);
                 while (!stoppingToken.IsCancellationRequested)
                 {
@@ -80,6 +81,7 @@ public sealed class PropagationWorker(CatalogRepository catalog, TrajectoryRepos
 
     public async Task HandleAsync(string payload, CancellationToken cancellationToken)
     {
+        if (!prediction.Value.PrecomputeTrajectories) return;
         var message = JsonSerializer.Deserialize<OrbitUpdatedEvent>(payload, Serialization.Options)
             ?? throw new InvalidDataException("Empty OrbitUpdated event.");
         if (message.EventType is not ("orbit.updated.v1" or "trajectory.refresh-requested.v1") || message.SchemaVersion != 1 || message.EventId == Guid.Empty
@@ -92,13 +94,6 @@ public sealed class PropagationWorker(CatalogRepository catalog, TrajectoryRepos
         using var activity = Telemetry.Activities.StartActivity("orbit.propagate");
         var orbit = await catalog.GetVersionAsync(message.OrbitalObjectId, message.OrbitVersion, cancellationToken)
             ?? throw new InvalidDataException("Referenced orbital element version does not exist.");
-        if (!prediction.Value.PrecomputeTrajectories)
-        {
-            // The API computes shared current positions and requested paths from the catalog.
-            // Keep consumption idempotent without writing millions of unused trajectory samples.
-            await trajectories.AcknowledgeAsync(message.EventId, cancellationToken);
-            return;
-        }
         var stopwatch = Stopwatch.StartNew();
         // Truncate to a UTC minute. Deterministic sampling within a delivery attempt and a bounded rolling cache.
         var now = DateTimeOffset.UtcNow;

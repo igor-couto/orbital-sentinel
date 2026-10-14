@@ -6,7 +6,7 @@ using OrbitalSentinel.Runtime;
 namespace OrbitalSentinel.Workers;
 
 public sealed class OutboxPublisher(OutboxRepository outbox, IProducer<string, string> producer,
-    IOptions<KafkaOptions> options, ILogger<OutboxPublisher> logger) : BackgroundService
+    IOptions<KafkaOptions> options, IOptions<PredictionOptions> prediction, ILogger<OutboxPublisher> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -17,7 +17,7 @@ public sealed class OutboxPublisher(OutboxRepository outbox, IProducer<string, s
             {
                 if (!topicsReady)
                 {
-                    await KafkaTopics.EnsureAsync(options.Value, stoppingToken);
+                    await KafkaTopics.EnsureAsync(options.Value, prediction.Value.PrecomputeTrajectories, stoppingToken);
                     topicsReady = true;
                 }
                 // Claims contain at most one event per partition key. Start every publication

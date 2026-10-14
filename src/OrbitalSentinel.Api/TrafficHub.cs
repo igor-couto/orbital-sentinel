@@ -13,7 +13,7 @@ public sealed record TrajectoryAvailable(Guid OrbitalObjectId, long OrbitVersion
 
 /// <summary>Each API replica broadcasts advisory notifications to its own connected browsers.</summary>
 public sealed class TrafficNotifications(IHubContext<TrafficHub> hub, IOptions<KafkaOptions> options,
-    ILogger<TrafficNotifications> logger) : BackgroundService
+    IOptions<PredictionOptions> prediction, ILogger<TrafficNotifications> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -24,7 +24,9 @@ public sealed class TrafficNotifications(IHubContext<TrafficHub> hub, IOptions<K
             using var consumer = KafkaTopics.CreateConsumer(options.Value, groupId, AutoOffsetReset.Latest);
             try
             {
-                consumer.Subscribe(new[] { options.Value.TrajectoryTopic, options.Value.ConjunctionTopic });
+                consumer.Subscribe(prediction.Value.PrecomputeTrajectories
+                    ? new[] { options.Value.TrajectoryTopic, options.Value.ConjunctionTopic }
+                    : new[] { options.Value.ConjunctionTopic });
                 while (!stoppingToken.IsCancellationRequested)
                 {
                     var record = consumer.Consume(stoppingToken);

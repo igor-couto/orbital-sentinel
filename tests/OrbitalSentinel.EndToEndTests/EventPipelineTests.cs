@@ -39,13 +39,14 @@ public sealed class EventPipelineTests : IAsyncLifetime
         dataSource = NpgsqlDataSource.Create(database.GetConnectionString());
         await new DatabaseMigrator(dataSource).MigrateAsync(CancellationToken.None);
         options = new KafkaOptions { BootstrapServers = kafka.GetBootstrapAddress() };
-        await KafkaTopics.EnsureAsync(options, CancellationToken.None);
+        await KafkaTopics.EnsureAsync(options, true, CancellationToken.None);
         producer = new ProducerBuilder<string, string>(new ProducerConfig
         {
             BootstrapServers = options.BootstrapServers, EnableIdempotence = true, Acks = Acks.All,
             MessageTimeoutMs = 10000
         }).Build();
-        publisher = new OutboxPublisher(new OutboxRepository(dataSource), producer, Options.Create(options), NullLogger<OutboxPublisher>.Instance);
+        publisher = new OutboxPublisher(new OutboxRepository(dataSource), producer, Options.Create(options),
+            Options.Create(new PredictionOptions { PrecomputeTrajectories = true }), NullLogger<OutboxPublisher>.Instance);
         propagation = new PropagationWorker(new CatalogRepository(dataSource), new TrajectoryRepository(dataSource),
             new ConsumerFailureRepository(dataSource), new Sgp4OrbitPropagator(), Options.Create(options),
             Options.Create(new PredictionOptions { PrecomputeTrajectories = true, HorizonHours = 1, StepSeconds = 60 }), NullLogger<PropagationWorker>.Instance);
@@ -54,20 +55,11 @@ public sealed class EventPipelineTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task On_demand_visualization_consumes_idempotently_without_persisting_catalog_wide_paths()
+    public async Task On_demand_visualization_works_without_orbit_events_or_trajectory_consumption()
     {
         await propagation.StopAsync(CancellationToken.None);
         var id = Guid.NewGuid();
-        var catalog = new CatalogRepository(dataSource);
-        await catalog.UpsertAsync(new CatalogImport(id, null, "On-demand spacecraft", null, "Unknown",
-            new OrbitalElements(DateTimeOffset.UtcNow, 15.5, 0.0004, 51.64, 20, 30, 40, 0.00005, 0, 0)));
-        var worker = new PropagationWorker(catalog, new TrajectoryRepository(dataSource), new ConsumerFailureRepository(dataSource),
-            new Sgp4OrbitPropagator(), Options.Create(options), Options.Create(new PredictionOptions()), NullLogger<PropagationWorker>.Instance);
         await using var connection = await dataSource.OpenConnectionAsync();
-        var payload = await connection.QuerySingleAsync<string>("SELECT payload::text FROM outbox_messages WHERE orbital_object_id=@id", new { id });
-        await worker.HandleAsync(payload, CancellationToken.None);
-        await worker.HandleAsync(payload, CancellationToken.None);
-        Assert.Equal(1, await connection.ExecuteScalarAsync<int>("SELECT count(*) FROM processed_messages WHERE consumer_name='trajectory-propagation'"));
         var clock = new MotionClock { Now = DateTimeOffset.UtcNow };
         using var factory = new WebApplicationFactory<ApiAssemblyMarker>().WithWebHostBuilder(builder =>
         {
@@ -77,6 +69,9 @@ public sealed class EventPipelineTests : IAsyncLifetime
             builder.ConfigureServices(services => services.AddSingleton<TimeProvider>(clock));
         });
         using var client = factory.CreateClient();
+        var catalog = factory.Services.GetRequiredService<CatalogRepository>();
+        await catalog.UpsertAsync(new CatalogImport(id, null, "On-demand spacecraft", null, "Unknown",
+            new OrbitalElements(DateTimeOffset.UtcNow, 15.5, 0.0004, 51.64, 20, 30, 40, 0.00005, 0, 0)));
         var path = await client.GetFromJsonAsync<Trajectory>($"/api/orbital-objects/{id}/trajectory");
         Assert.NotNull(path);
         Assert.Equal(1441, path.Points.Count);
@@ -106,6 +101,8 @@ public sealed class EventPipelineTests : IAsyncLifetime
         Assert.Equal(motion.StartUtc.AddMinutes(1), next.StartUtc);
         Assert.Equal(motion.Objects[0].States.Skip(12), next.Objects[0].States.Take(18));
         Assert.Equal(0, await connection.ExecuteScalarAsync<int>("SELECT count(*) FROM trajectory_predictions"));
+        Assert.Equal(0, await connection.ExecuteScalarAsync<int>("SELECT count(*) FROM outbox_messages"));
+        Assert.Equal(0, await connection.ExecuteScalarAsync<int>("SELECT count(*) FROM processed_messages"));
     }
 
     [Fact]

@@ -3,9 +3,12 @@ using Npgsql;
 
 namespace OrbitalSentinel.Infrastructure;
 
-public sealed class OutboxRepository(NpgsqlDataSource dataSource)
+public sealed class OutboxRepository(NpgsqlDataSource dataSource, bool publishTrajectories = true)
 {
     public const int MaxAttempts = 8;
+    // Preserve queued optional work while disabled, without leasing it or consuming retry attempts.
+    private readonly string[] excludedEventTypes = publishTrajectories ? [] :
+        [OrbitUpdatedEvent.TypeName, TrajectoryRefreshRequestedEvent.TypeName, TrajectoryUpdatedEvent.TypeName];
 
     public async Task<IReadOnlyList<OutboxLease>> ClaimAsync(int batchSize, TimeSpan leaseDuration,
         CancellationToken cancellationToken = default)
@@ -19,19 +22,22 @@ public sealed class OutboxRepository(NpgsqlDataSource dataSource)
             UPDATE outbox_messages SET dead_lettered_at=clock_timestamp(), lease_token=NULL, lease_expires_at=NULL,
                 last_error=COALESCE(last_error,'Publisher lease expired after final attempt')
             WHERE published_at IS NULL AND dead_lettered_at IS NULL AND retry_count >= @MaxAttempts
+                AND NOT (event_type = ANY(@excludedEventTypes))
                 AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp());
-            """, new { MaxAttempts }, transaction, cancellationToken: cancellationToken));
+            """, new { MaxAttempts, excludedEventTypes }, transaction, cancellationToken: cancellationToken));
         var token = Guid.NewGuid();
         var rows = await connection.QueryAsync<OutboxLease>(new CommandDefinition("""
             WITH candidates AS (
                 SELECT m.id FROM outbox_messages m
                 WHERE m.published_at IS NULL AND m.dead_lettered_at IS NULL
+                    AND NOT (m.event_type = ANY(@excludedEventTypes))
                     AND m.retry_count < @MaxAttempts AND m.next_attempt_at <= clock_timestamp()
                     AND (m.lease_expires_at IS NULL OR m.lease_expires_at <= clock_timestamp())
                     AND NOT EXISTS (
                         SELECT 1 FROM outbox_messages earlier
                         WHERE earlier.partition_key=m.partition_key AND earlier.sequence<m.sequence
                             AND earlier.published_at IS NULL AND earlier.dead_lettered_at IS NULL
+                            AND NOT (earlier.event_type = ANY(@excludedEventTypes))
                     )
                 ORDER BY m.sequence FOR UPDATE OF m SKIP LOCKED LIMIT @batchSize
             )
@@ -40,7 +46,7 @@ public sealed class OutboxRepository(NpgsqlDataSource dataSource)
             FROM candidates c WHERE m.id=c.id
             RETURNING m.id AS Id,m.event_type AS EventType,m.payload::text AS Payload,
                 m.partition_key AS PartitionKey,m.retry_count AS RetryCount,m.lease_token AS LeaseToken;
-            """, new { MaxAttempts, batchSize, token, leaseDuration }, transaction, cancellationToken: cancellationToken));
+            """, new { MaxAttempts, batchSize, token, leaseDuration, excludedEventTypes }, transaction, cancellationToken: cancellationToken));
         await transaction.CommitAsync(cancellationToken);
         return rows.ToArray();
     }

@@ -11,6 +11,7 @@ x-app-environment: &app-environment
   CelesTrak__RequestIntervalMinutes: 120
   Prediction__HorizonHours: 24
   Prediction__StepSeconds: 60
+  Prediction__PrecomputeTrajectories: ${PRECOMPUTE_TRAJECTORIES:-false}
   # Give the Raspberry Pi time to screen and save a full-catalog prediction run.
   ConjunctionScreening__MaximumScanMinutes: ${CONJUNCTION_MAX_SCAN_MINUTES:-60}
 

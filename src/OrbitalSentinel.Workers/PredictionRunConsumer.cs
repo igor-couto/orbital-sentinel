@@ -8,7 +8,7 @@ namespace OrbitalSentinel.Workers;
 
 /// <summary>Kafka delivery ends at a durable job, not after a potentially long numerical scan.</summary>
 public sealed class PredictionRunConsumer(ConjunctionRepository repository, ConsumerFailureRepository failures,
-    IOptions<KafkaOptions> options, ILogger<PredictionRunConsumer> logger) : BackgroundService
+    IOptions<KafkaOptions> options, IOptions<PredictionOptions> prediction, ILogger<PredictionRunConsumer> logger) : BackgroundService
 {
     public async Task HandleAsync(string payload, CancellationToken ct)
     {
@@ -27,7 +27,7 @@ public sealed class PredictionRunConsumer(ConjunctionRepository repository, Cons
             using var consumer = KafkaTopics.CreateConsumer(options.Value, options.Value.ConjunctionGroup, AutoOffsetReset.Earliest);
             try
             {
-                await KafkaTopics.EnsureAsync(options.Value, stoppingToken);
+                await KafkaTopics.EnsureAsync(options.Value, prediction.Value.PrecomputeTrajectories, stoppingToken);
                 consumer.Subscribe(options.Value.PredictionRunTopic);
                 while (!stoppingToken.IsCancellationRequested)
                 {

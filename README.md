@@ -42,7 +42,7 @@ The implemented stack is .NET 10/C#/ASP.NET Core, Dapper/Npgsql, PostgreSQL 17, 
 ```mermaid
 flowchart LR
     C[CelesTrak OMM JSON] --> I[Ingestion worker]
-    I -->|atomic orbit revision + event| DB[(PostgreSQL)]
+    I -->|orbit revision; event when precomputation enabled| DB[(PostgreSQL)]
     DB --> O[Outbox publisher]
     O -->|OrbitUpdated / PredictionRunCompleted| K[(Kafka)]
     K --> J[Durable conjunction jobs]
@@ -62,7 +62,9 @@ The backend uses SGP4 to calculate TEME positions and velocities, then converts 
 
 Smooth movement uses shared two-minute motion buffers refreshed once per minute. The browser interpolates backend samples at a target of 30 frames per second, without running SGP4 or extrapolating expired data.
 
-Full trajectories are calculated on demand and briefly cached. Optional database-backed precomputation remains available. Markers and paths share a display clock, while preview and conjunction views isolate their selected time.
+Full trajectories are calculated on demand and briefly cached. With `Prediction:PrecomputeTrajectories=false` (the default), ingestion writes no orbit/trajectory-refresh events, the propagation consumer is not started, and trajectory topics are neither provisioned nor subscribed to. Previously queued trajectory-branch outbox events remain paused without consuming retry attempts; existing topics and data are retained. Conjunction events, screening, and notifications remain active. Markers and paths share a display clock, while preview and conjunction views isolate their selected time.
+
+To restore database-backed trajectory precomputation, set `Prediction__PrecomputeTrajectories=true` for both API and workers and restart them. With either Compose configuration, set `PRECOMPUTE_TRAJECTORIES=true` in its `.env` and recreate the application containers. This resumes the optional branch; the existing refresh scheduler also queues missing or outdated trajectories for objects imported while it was disabled. It may take until the next scheduled refresh (up to 30 minutes) to enqueue them, followed by calculation time.
 
 Conjunction screening uses spatial filtering to reduce candidate comparisons, followed by relative-motion checks and direct SGP4 refinement. Objects that cannot propagate are excluded and reported through a Partial screening coverage notice. Simulation failures remain explicit errors.
 

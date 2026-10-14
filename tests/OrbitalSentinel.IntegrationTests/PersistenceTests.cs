@@ -54,6 +54,71 @@ public sealed class PersistenceTests(PostgresFixture fixture) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task On_demand_imports_preserve_versions_and_reenabling_precomputation_schedules_existing_objects()
+    {
+        var catalog = new CatalogRepository(fixture.DataSource, publishOrbitEvents: false);
+        var import = Import();
+        Assert.True(await catalog.UpsertAsync(import));
+        var updated = import with { Elements = import.Elements with { EpochUtc = Epoch.AddHours(2) } };
+        Assert.True(await catalog.UpsertAsync(updated));
+        Assert.False(await catalog.UpsertAsync(import));
+        var snapshot = Assert.Single((await catalog.ListAsync(1, 20, null)).Items);
+        Assert.Equal(2, snapshot.Version);
+        Assert.Equal(2, await Count("orbital_element_sets"));
+        Assert.Equal(0, await catalog.EnqueueRefreshAsync(Epoch.AddHours(18)));
+        Assert.Equal(0, await Count("outbox_messages"));
+
+        // Enabling does not require an upstream element change: the refresh scheduler fills the cache.
+        Assert.False(await Catalog.UpsertAsync(updated));
+        Assert.Equal(1, await Catalog.EnqueueRefreshAsync(Epoch.AddHours(18)));
+        var refresh = Assert.Single(await Outbox.ClaimAsync(10, TimeSpan.FromMinutes(1)));
+        Assert.Equal(TrajectoryRefreshRequestedEvent.TypeName, refresh.EventType);
+        Assert.Equal(snapshot.Object.Id.ToString("D"), refresh.PartitionKey);
+    }
+
+    [Fact]
+    public async Task Disabled_trajectory_outbox_events_are_paused_and_do_not_block_conjunction_publication()
+    {
+        var types = new[] { OrbitUpdatedEvent.TypeName, TrajectoryRefreshRequestedEvent.TypeName, TrajectoryUpdatedEvent.TypeName };
+        foreach (var type in types)
+            await Sql("""
+                INSERT INTO outbox_messages(id,event_type,partition_key,payload,occurred_at)
+                VALUES (@id,@type,'shared-key','{}',now());
+                """, new { id = Guid.NewGuid(), type });
+        var conjunctionId = Guid.NewGuid();
+        await Sql("""
+            INSERT INTO outbox_messages(id,event_type,partition_key,payload,occurred_at)
+            VALUES (@id,@type,'shared-key','{}',now());
+            """, new { id = conjunctionId, type = ConjunctionAssessmentCreatedEvent.TypeName });
+        var paused = new OutboxRepository(fixture.DataSource, publishTrajectories: false);
+        var active = Assert.Single(await paused.ClaimAsync(10, TimeSpan.FromMinutes(1)));
+        Assert.Equal(conjunctionId, active.Id);
+        Assert.True(await paused.MarkPublishedAsync(active.Id, active.LeaseToken));
+        Assert.Empty(await paused.ClaimAsync(10, TimeSpan.FromMinutes(1)));
+        Assert.Equal(3, await Count("outbox_messages", "WHERE published_at IS NULL AND retry_count=0 AND lease_token IS NULL AND dead_lettered_at IS NULL"));
+
+        // Re-enabling resumes the preserved messages in their original per-key order.
+        foreach (var type in types)
+        {
+            var resumed = Assert.Single(await Outbox.ClaimAsync(10, TimeSpan.FromMinutes(1)));
+            Assert.Equal(type, resumed.EventType);
+            Assert.True(await Outbox.MarkPublishedAsync(resumed.Id, resumed.LeaseToken));
+        }
+    }
+
+    [Fact]
+    public async Task Paused_events_do_not_exhaust_retries_when_an_old_publisher_lease_expires()
+    {
+        await Catalog.UpsertAsync(Import());
+        await Sql("UPDATE outbox_messages SET retry_count=@attempts;", new { attempts = OutboxRepository.MaxAttempts });
+        var paused = new OutboxRepository(fixture.DataSource, publishTrajectories: false);
+        Assert.Empty(await paused.ClaimAsync(10, TimeSpan.FromMinutes(1)));
+        Assert.Equal(0, await Count("outbox_messages", "WHERE dead_lettered_at IS NOT NULL"));
+        Assert.Empty(await Outbox.ClaimAsync(10, TimeSpan.FromMinutes(1)));
+        Assert.Equal(1, await Count("outbox_messages", "WHERE dead_lettered_at IS NOT NULL"));
+    }
+
+    [Fact]
     public async Task Classification_updates_existing_unknown_objects_without_new_orbital_revision()
     {
         var import = Import(34146) with { Name = "IRIDIUM 33 DEB" };
