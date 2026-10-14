@@ -739,6 +739,11 @@ export function App() {
             browser only interpolates those samples for visualization; it does
             not calculate orbital dynamics.
           </p>
+          <h3>Globe and imagery</h3>
+          <p>
+            The globe is powered by CesiumJS, with public-domain imagery from
+            Natural Earth. Both are served locally by Orbital Sentinel.
+          </p>
           <h3>How object types are assigned</h3>
           <p>
             When CelesTrak supplies an object type, we use it. Otherwise, clear

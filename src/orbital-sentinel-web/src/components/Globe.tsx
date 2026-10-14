@@ -86,9 +86,12 @@ export function Globe({
     let disposed = false;
     let viewer: Cesium.Viewer | null = null;
     let animationFrame = 0;
+    const defaultCredit = C.CreditDisplay.cesiumCredit;
     try {
       // Explicitly disable ion-backed default imagery and geocoding. All globe
       // resources and Natural Earth imagery are served from this application.
+      // No ion services are used; omit its default logo while leaving provider credits enabled.
+      C.CreditDisplay.cesiumCredit = new C.Credit("");
       viewer = new C.Viewer(container.current, {
         baseLayer: false,
         baseLayerPicker: false,
@@ -123,9 +126,6 @@ export function Globe({
       viewer.camera.setView({
         destination: C.Cartesian3.fromDegrees(18, 20, 16_000_000),
       });
-      viewer.cesiumWidget.creditDisplay.addStaticCredit(
-        new C.Credit("Natural Earth", true),
-      );
       viewer.screenSpaceEventHandler.setInputAction(
         (event: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
           const picked: unknown = activeViewer.scene.pick(event.position);
@@ -242,6 +242,7 @@ export function Globe({
       predictionLine.current = null;
       catalogLayer.current = null;
       if (viewer && !viewer.isDestroyed()) viewer.destroy();
+      C.CreditDisplay.cesiumCredit = defaultCredit;
     };
   }, []);
 
