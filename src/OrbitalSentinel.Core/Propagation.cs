@@ -14,7 +14,15 @@ public sealed record StateVector(
 /// The GMST rotation assumes UT1 = UTC and neglects polar motion; this is not precise ITRF.
 /// </summary>
 public sealed record VisualizationPoint(DateTimeOffset TimestampUtc, CartesianVector PositionEcefMeters,
-    double? AltitudeKilometers = null, double? SpeedKilometersPerSecond = null);
+    double? AltitudeKilometers = null, double? SpeedKilometersPerSecond = null,
+    CartesianVector? VelocityEcefMetersPerSecond = null);
+
+/// <summary>Uniform samples packed as x,y,z,vx,vy,vz in Earth-fixed metres and metres/second.</summary>
+public sealed record ObjectMotion(Guid OrbitalObjectId, long OrbitVersion, double[] States);
+
+/// <summary>A shared, transient visualization buffer. No orbital dynamics run in the browser.</summary>
+public sealed record CatalogMotion(Guid Id, DateTimeOffset StartUtc, DateTimeOffset EndUtc,
+    int StepSeconds, int CatalogCount, IReadOnlyList<ObjectMotion> Objects);
 
 /// <summary>A bounded set of visualization samples, including both requested endpoints.</summary>
 public sealed record Trajectory(

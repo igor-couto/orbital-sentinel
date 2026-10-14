@@ -4,6 +4,7 @@ import type {
   OrbitSnapshot,
   Trajectory,
 } from "../domain/orbits";
+import type { CatalogMotion } from "../domain/motion";
 
 export class ApiError extends Error {
   constructor(
@@ -44,7 +45,16 @@ function validPoint(value: unknown): boolean {
         value[key] === undefined || value[key] === null || isNumber(value[key]),
     ) &&
     (value.speedKilometersPerSecond == null ||
-      (value.speedKilometersPerSecond as number) >= 0)
+      (value.speedKilometersPerSecond as number) >= 0) &&
+    (value.velocityEcefMetersPerSecond == null ||
+      (isRecord(value.velocityEcefMetersPerSecond) &&
+        ["x", "y", "z"].every((axis) =>
+          isNumber(
+            (value.velocityEcefMetersPerSecond as Record<string, unknown>)[
+              axis
+            ],
+          ),
+        )))
   );
 }
 
@@ -152,12 +162,13 @@ export async function request(
   path: string,
   signal: AbortSignal,
   options: RequestInit = {},
+  timeoutMs = 12_000,
 ): Promise<Response> {
   let response: Response;
   try {
     response = await fetch(path, {
       ...options,
-      signal: AbortSignal.any([signal, AbortSignal.timeout(12_000)]),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
       headers: { Accept: "application/json", ...options.headers },
     });
   } catch (error) {
@@ -167,7 +178,7 @@ export async function request(
       0,
     );
   }
-  if (!response.ok) {
+  if (!response.ok && response.status !== 304) {
     let title: string | undefined;
     try {
       const problem: unknown = await response.json();
@@ -230,6 +241,91 @@ export async function getPositions(
 ): Promise<ObjectPosition[]> {
   const response = await request("/api/orbital-objects/positions", signal);
   return parsePositions(await readJson(response));
+}
+
+export function parseCatalogMotion(value: unknown): CatalogMotion {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
+    !isDate(value.startUtc) ||
+    !isDate(value.endUtc) ||
+    !isInteger(value.stepSeconds) ||
+    value.stepSeconds < 1 ||
+    !isInteger(value.catalogCount) ||
+    value.catalogCount < 0 ||
+    !Array.isArray(value.objects) ||
+    value.objects.length > value.catalogCount
+  )
+    return invalid();
+  const start = Date.parse(value.startUtc),
+    end = Date.parse(value.endUtc);
+  const intervals = (end - start) / (value.stepSeconds * 1000);
+  if (
+    !Number.isInteger(intervals) ||
+    intervals < 1 ||
+    intervals > 300 ||
+    end - start > 300_000
+  )
+    return invalid();
+  const ids = new Set<string>();
+  // One backing store also lets the worker clone this buffer without copying
+  // thousands of separately allocated ArrayBuffers onto the rendering thread.
+  const stateCount = (intervals + 1) * 6;
+  const packed = new Float64Array(value.objects.length * stateCount);
+  const objects = value.objects.map((item, index) => {
+    if (
+      !isRecord(item) ||
+      typeof item.orbitalObjectId !== "string" ||
+      !item.orbitalObjectId ||
+      ids.has(item.orbitalObjectId) ||
+      !isInteger(item.orbitVersion) ||
+      item.orbitVersion < 1 ||
+      !Array.isArray(item.states) ||
+      item.states.length !== stateCount ||
+      !item.states.every(isNumber)
+    )
+      return invalid();
+    ids.add(item.orbitalObjectId);
+    const states = packed.subarray(
+      index * stateCount,
+      (index + 1) * stateCount,
+    );
+    states.set(item.states);
+    return {
+      orbitalObjectId: item.orbitalObjectId,
+      orbitVersion: item.orbitVersion,
+      states,
+    };
+  });
+  return {
+    id: value.id,
+    startUtc: value.startUtc,
+    endUtc: value.endUtc,
+    start,
+    end,
+    stepSeconds: value.stepSeconds,
+    catalogCount: value.catalogCount,
+    objects,
+  };
+}
+
+/** Each subscriber owns its conditional-request cache; an unchanged buffer isn't downloaded again. */
+export function createMotionLoader() {
+  let cached: CatalogMotion | null = null;
+  let etag: string | null = null;
+  return async (signal: AbortSignal): Promise<CatalogMotion> => {
+    const response = await request(
+      "/api/orbital-objects/motion",
+      signal,
+      { headers: etag ? { "If-None-Match": etag } : {} },
+      30_000,
+    );
+    if (response.status === 304) return cached ?? invalid();
+    const next = parseCatalogMotion(await readJson(response));
+    cached = next;
+    etag = response.headers.get("ETag");
+    return next;
+  };
 }
 
 export type TrajectoryResult =

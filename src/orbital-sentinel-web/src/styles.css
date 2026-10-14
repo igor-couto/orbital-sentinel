@@ -625,8 +625,8 @@ main {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 31px;
-  width: 31px;
+  height: 5px;
+  width: 5px;
   border-radius: 5px;
   background: #1c2b32;
   color: #80ceaf;

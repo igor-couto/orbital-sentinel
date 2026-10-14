@@ -1,12 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HubConnectionBuilder, LogLevel } from "@microsoft/signalr";
-import { getCatalog, getPositions, getTrajectory } from "../api/client";
-import type {
-  CatalogPage,
-  ObjectPosition,
-  OrbitSnapshot,
-  Trajectory,
-} from "../domain/orbits";
+import { getCatalog, getTrajectory } from "../api/client";
+import { createMotionWorkerClient } from "../api/motionWorkerClient";
+import type { CatalogPage, OrbitSnapshot, Trajectory } from "../domain/orbits";
 
 export type ConnectionState =
   "connecting" | "live" | "reconnecting" | "polling";
@@ -81,12 +77,29 @@ export function useTrafficData() {
     setManualRevision((previous) => previous + 1);
   }, []);
   const catalog = usePolledResource<CatalogPage>(getCatalog, 300_000, revision);
-  const positions = usePolledResource<ObjectPosition[]>(
-    getPositions,
-    15_000,
-    revision,
-  );
+  const motionClient = useMemo(createMotionWorkerClient, []);
+  const motion = usePolledResource(motionClient.load, 30_000, revision);
+  useEffect(() => () => motionClient.dispose(), [motionClient]);
   const pendingUpdates = useRef(new Set<string>());
+  const reconciledMotion = useRef<string | null>(null);
+
+  useEffect(() => {
+    const buffer = motion.value,
+      items = catalog.value?.items;
+    if (!buffer || !items || reconciledMotion.current === buffer.id) return;
+    reconciledMotion.current = buffer.id;
+    const revisions = new Map(
+      items.map((item) => [item.object.id, item.version]),
+    );
+    // Catch new elements even when on-demand propagation emits no Kafka notification.
+    if (
+      buffer.objects.some(
+        (item) =>
+          (revisions.get(item.orbitalObjectId) ?? 0) < item.orbitVersion,
+      )
+    )
+      invalidate();
+  }, [motion.value, catalog.value, invalidate]);
 
   useEffect(() => {
     let disposed = false;
@@ -155,7 +168,7 @@ export function useTrafficData() {
 
   return {
     catalog,
-    positions,
+    motion,
     connection,
     trajectoryUpdates,
     refresh,

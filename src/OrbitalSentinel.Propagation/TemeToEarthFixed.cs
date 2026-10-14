@@ -6,10 +6,11 @@ namespace OrbitalSentinel.Propagation;
 /// Visualization-only TEME to pseudo-Earth-fixed rotation using Vallado's GMST expression.
 /// UTC approximates UT1; polar motion and Earth orientation corrections are omitted.
 /// Result is adequate for the demo globe but must not be labelled precise ITRF.
-/// Velocity conversion is intentionally absent: rotating velocities also requires Earth rotation terms.
+/// Velocity includes the Earth-rotation term and is the derivative of the displayed position.
 /// </summary>
 public static class TemeToEarthFixed
 {
+    public const double EarthRotationRadiansPerSecond = 7.29211514670698e-5;
     public static VisualizationPoint Convert(StateVector state)
     {
         ArgumentNullException.ThrowIfNull(state);
@@ -21,10 +22,17 @@ public static class TemeToEarthFixed
         // Speed remains the magnitude of the SGP4 TEME velocity, not Earth-relative ground speed.
         var speed = Math.Sqrt(velocity.X * velocity.X + velocity.Y * velocity.Y + velocity.Z * velocity.Z);
         // Geodetic height is invariant under the rotation about Earth's polar axis.
-        return new VisualizationPoint(state.TimestampUtc.ToUniversalTime(), new CartesianVector(
+        var fixedPosition = new CartesianVector(
             1000 * (cos * position.X + sin * position.Y),
             1000 * (-sin * position.X + cos * position.Y),
-            1000 * position.Z), OrbitDisplayGeometry.AltitudeKilometers(position), speed);
+            1000 * position.Z);
+        // v_fixed = R v_TEME - omega × r_fixed, not merely R v_TEME.
+        var fixedVelocity = new CartesianVector(
+            1000 * (cos * velocity.X + sin * velocity.Y) + EarthRotationRadiansPerSecond * fixedPosition.Y,
+            1000 * (-sin * velocity.X + cos * velocity.Y) - EarthRotationRadiansPerSecond * fixedPosition.X,
+            1000 * velocity.Z);
+        return new VisualizationPoint(state.TimestampUtc.ToUniversalTime(), fixedPosition,
+            OrbitDisplayGeometry.AltitudeKilometers(position), speed, fixedVelocity);
     }
 
     public static double GreenwichMeanSiderealTimeRadians(DateTimeOffset timestampUtc)

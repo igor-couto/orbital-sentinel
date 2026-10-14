@@ -3,13 +3,9 @@ import { CatalogList } from "./components/CatalogList";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Globe } from "./components/Globe";
 import { Icon } from "./components/Icon";
-import {
-  formatUtc,
-  interpolatePosition,
-  isCurrentPosition,
-  objectKind,
-} from "./domain/orbits";
+import { formatUtc, interpolatePosition, objectKind } from "./domain/orbits";
 import type { ObjectKind, OrbitSnapshot } from "./domain/orbits";
+import { motionCovers } from "./domain/motion";
 import { useSelectedTrajectory, useTrafficData } from "./hooks/useTrafficData";
 import { useConjunctions } from "./hooks/useConjunctions";
 import {
@@ -61,10 +57,9 @@ export function App() {
   const currentPosition = trajectory
     ? interpolatePosition(trajectory, timestamp)
     : undefined;
-  const visiblePositions =
-    data.positions.value?.filter((position) =>
-      isCurrentPosition(position, now),
-    ) ?? [];
+  const motion = data.motion.value;
+  const motionAvailable = motionCovers(motion, now);
+  const visibleCount = motionAvailable ? motion!.objects.length : 0;
 
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 1000);
@@ -108,7 +103,7 @@ export function App() {
     reconnecting: "Reconnecting",
     polling: "Polling fallback",
   }[data.connection];
-  const positionError = data.positions.error;
+  const positionError = data.motion.error;
   const trajectoryStart = trajectory ? Date.parse(trajectory.startUtc) : now;
   const trajectoryEnd = trajectory
     ? Date.parse(trajectory.endUtc)
@@ -118,7 +113,7 @@ export function App() {
     Math.min(trajectoryEnd, timestamp),
   );
   const shownCount =
-    previewTime === null ? visiblePositions.length : currentPosition ? 1 : 0;
+    previewTime === null ? visibleCount : currentPosition ? 1 : 0;
 
   return (
     <div className="app-shell">
@@ -184,11 +179,7 @@ export function App() {
             </div>
             <div>
               <span className="metric-label">Current position samples</span>
-              <strong>
-                {data.positions.value
-                  ? visiblePositions.length.toLocaleString()
-                  : "—"}
-              </strong>
+              <strong>{motion ? visibleCount.toLocaleString() : "—"}</strong>
             </div>
             <span className="metric-note">
               {positionError
@@ -203,12 +194,10 @@ export function App() {
             <div>
               <span className="metric-label">Latest position refresh</span>
               <strong className="metric-time">
-                {data.positions.receivedAt
-                  ? formatUtc(data.positions.receivedAt)
-                  : "—"}
+                {motion ? formatUtc(motion.startUtc) : "—"}
               </strong>
             </div>
-            <span className="metric-note">UTC · every 15 seconds</span>
+            <span className="metric-note">UTC · smooth live movement</span>
           </div>
         </section>
 
@@ -374,7 +363,7 @@ export function App() {
             </div>
             <Globe
               objects={objects}
-              positions={data.positions.value ?? []}
+              motion={motion}
               selected={selected}
               trajectory={trajectory}
               timestamp={timestamp}
@@ -384,10 +373,11 @@ export function App() {
               encounter={encounter}
               focusRequest={focusRequest}
             />
-            {positionError && !encounter && (
+            {(positionError || (motion && !motionAvailable)) && !encounter && (
               <div className="position-warning" role="status">
-                Position refresh failed. Samples older than 2 minutes are
-                hidden.
+                {motionAvailable
+                  ? "Prediction refresh delayed. Movement continues within the available window."
+                  : "Current predictions are unavailable. Awaiting fresh position data."}
               </div>
             )}
             <div className="globe-legend">
@@ -722,11 +712,11 @@ export function App() {
           </p>
           <h3>Time is part of the data</h3>
           <p>
-            Catalog positions refresh every 15 seconds and are hidden if their
-            sample time differs from the current time by more than two minutes.
-            The selected object moves between backend samples. Preview mode
-            hides the rest of the catalog so positions from different times are
-            not presented as a shared scene.
+            The backend predicts a short window of positions and velocities for
+            the full catalog. The browser interpolates between those samples for
+            smooth movement and hides objects when that window expires. Preview
+            mode hides the rest of the catalog so positions from different times
+            are not presented as a shared scene.
           </p>
           <h3>Predicted close approaches</h3>
           <p>

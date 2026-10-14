@@ -84,6 +84,17 @@ api.MapGet("/orbital-objects/positions", async (TrajectoryRepository trajectorie
         ? await trajectories.ListPositionsAsync(DateTimeOffset.UtcNow, ct) : await visualization.GetPositionsAsync(ct)))
     .WithName("GetCurrentPositions");
 
+api.MapGet("/orbital-objects/motion", async (CatalogVisualization visualization, HttpContext context, CancellationToken ct) =>
+{
+    var motion = await visualization.GetMotionAsync(ct);
+    var etag = $"\"{motion.Id}\"";
+    context.Response.Headers.ETag = etag;
+    context.Response.Headers.CacheControl = "private, no-cache";
+    if (context.Request.Headers.IfNoneMatch.Any(value => value == etag))
+        return Results.StatusCode(StatusCodes.Status304NotModified);
+    return Results.Ok(motion);
+}).WithName("GetCatalogMotion");
+
 api.MapGet("/orbital-objects/{id:guid}", async (Guid id, CatalogRepository catalog, CancellationToken ct) =>
     await catalog.GetAsync(id, ct) is { } orbit ? Results.Ok(orbit) : Results.Problem(statusCode: 404, title: "Orbital object not found."))
     .WithName("GetOrbitalObject");

@@ -1,16 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import type * as Cesium from "cesium";
-import { isCurrentPosition, kindColor, objectKind } from "../domain/orbits";
-import type {
-  ObjectPosition,
-  OrbitSnapshot,
-  Trajectory,
-} from "../domain/orbits";
+import { interpolatePosition } from "../domain/orbits";
+import type { OrbitSnapshot, Trajectory } from "../domain/orbits";
 import { Icon } from "./Icon";
 import type { ConjunctionVisualization } from "../domain/conjunctions";
 import { reconcileGlobeEntities } from "./globeEntities";
 import { createLivePolyline } from "./livePolyline";
 import { predictionPath } from "../domain/predictionPath";
+import type { CatalogMotion } from "../domain/motion";
+import { CatalogMotionLayer } from "./catalogMotionLayer";
 
 declare global {
   interface Window {
@@ -21,7 +19,7 @@ declare global {
 
 interface Props {
   objects: OrbitSnapshot[];
-  positions: ObjectPosition[];
+  motion: CatalogMotion | null;
   selected: OrbitSnapshot | undefined;
   trajectory: Trajectory | null;
   timestamp: number;
@@ -34,7 +32,7 @@ interface Props {
 
 export function Globe({
   objects,
-  positions,
+  motion,
   selected,
   trajectory,
   timestamp,
@@ -46,6 +44,23 @@ export function Globe({
 }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
+  const catalogLayer = useRef<CatalogMotionLayer | null>(null);
+  const frameState = useRef({
+    selected,
+    trajectory,
+    timestamp,
+    preview,
+    showTrajectory,
+    encounter,
+  });
+  frameState.current = {
+    selected,
+    trajectory,
+    timestamp,
+    preview,
+    showTrajectory,
+    encounter,
+  };
   const predictionLine = useRef<ReturnType<typeof createLivePolyline> | null>(
     null,
   );
@@ -54,9 +69,6 @@ export function Globe({
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
   const selectedId = selected?.object.id;
-  const periodMinutes = selected
-    ? 1440 / selected.elements.meanMotionRevolutionsPerDay
-    : 90;
 
   useEffect(() => {
     const C = window.Cesium;
@@ -69,6 +81,7 @@ export function Globe({
     window.CESIUM_BASE_URL = "/cesium/";
     let disposed = false;
     let viewer: Cesium.Viewer | null = null;
+    let animationFrame = 0;
     try {
       // Explicitly disable ion-backed default imagery and geocoding. All globe
       // resources and Natural Earth imagery are served from this application.
@@ -85,6 +98,7 @@ export function Globe({
         infoBox: false,
         selectionIndicator: false,
         shouldAnimate: false,
+        useDefaultRenderLoop: false,
         requestRenderMode: true,
         maximumRenderTimeChange: Infinity,
         skyBox: false,
@@ -94,6 +108,7 @@ export function Globe({
       const activeViewer = viewer;
       viewerRef.current = viewer;
       predictionLine.current = createLivePolyline(C);
+      catalogLayer.current = new CatalogMotionLayer(C, viewer.scene);
       viewer.scene.backgroundColor = C.Color.fromCssColorString("#080d16");
       viewer.scene.globe.baseColor = C.Color.fromCssColorString("#152b3c");
       viewer.scene.globe.enableLighting = false;
@@ -118,10 +133,76 @@ export function Globe({
           ) {
             const id = picked.id.id;
             if (id.startsWith("object:")) onSelectRef.current(id.slice(7));
+          } else if (
+            picked &&
+            typeof picked === "object" &&
+            "orbitalObjectId" in picked &&
+            typeof picked.orbitalObjectId === "string"
+          ) {
+            onSelectRef.current(picked.orbitalObjectId);
           }
         },
         C.ScreenSpaceEventType.LEFT_CLICK,
       );
+      let lastFrame = 0;
+      let measuredFrames = 0,
+        measuredTime = 0,
+        previousFrame = 0;
+      const animate = (wallTime: number) => {
+        if (disposed || activeViewer.isDestroyed()) return;
+        animationFrame = requestAnimationFrame(animate);
+        if (document.hidden || wallTime - lastFrame < 1000 / 30) return;
+        lastFrame = wallTime - ((wallTime - lastFrame) % (1000 / 30));
+        const state = frameState.current;
+        const live = !state.preview && !state.encounter;
+        // Preserve the full catalog on slower GPUs. Reduce only canvas resolution,
+        // not sample density, marker count, or the accuracy of the displayed clock.
+        const elapsed = wallTime - previousFrame;
+        previousFrame = wallTime;
+        if (live && elapsed > 0 && elapsed < 250) {
+          measuredFrames++;
+          measuredTime += elapsed;
+          if (measuredTime >= 2000) {
+            if (
+              measuredTime / measuredFrames > 42 &&
+              activeViewer.resolutionScale > 0.65
+            )
+              activeViewer.resolutionScale = Math.max(
+                0.65,
+                activeViewer.resolutionScale * 0.85,
+              );
+            measuredFrames = 0;
+            measuredTime = 0;
+          }
+        }
+        const time = live ? Date.now() : state.timestamp;
+        activeViewer.clock.currentTime = C.JulianDate.fromDate(new Date(time));
+        catalogLayer.current?.update(time, !live);
+        const path = predictionLine.current;
+        if (path && !state.encounter) {
+          const vertices =
+            state.selected && state.trajectory
+              ? predictionPath(
+                  state.trajectory,
+                  time,
+                  1440 / state.selected.elements.meanMotionRevolutionsPerDay,
+                ).map((p) => new C.Cartesian3(p.x, p.y, p.z))
+              : [];
+          // The line and selected marker use exactly the same displayed position.
+          const marker =
+            state.selected &&
+            activeViewer.entities
+              .getById(`object:${state.selected.object.id}`)
+              ?.position?.getValue(activeViewer.clock.currentTime);
+          if (vertices.length && marker) vertices[0] = marker;
+          path.setPositions(vertices);
+          path.entity.show = state.showTrajectory && vertices.length > 1;
+        }
+        if (live) activeViewer.scene.requestRender();
+        activeViewer.resize();
+        activeViewer.render();
+      };
+      animationFrame = requestAnimationFrame(animate);
       void C.TileMapServiceImageryProvider.fromUrl(
         "/cesium/Assets/Textures/NaturalEarthII",
         {
@@ -150,18 +231,26 @@ export function Globe({
     }
     return () => {
       disposed = true;
+      cancelAnimationFrame(animationFrame);
       setReady(false);
       viewerRef.current = null;
       predictionLine.current = null;
+      catalogLayer.current = null;
       if (viewer && !viewer.isDestroyed()) viewer.destroy();
     };
   }, []);
 
   useEffect(() => {
+    if (!ready) return;
+    catalogLayer.current?.setData(motion, objects);
+    catalogLayer.current?.hideSelected(selectedId);
+    viewerRef.current?.scene.requestRender();
+  }, [ready, motion, objects, selectedId]);
+
+  useEffect(() => {
     const viewer = viewerRef.current;
     const C = window.Cesium;
     if (!ready || !viewer || !C) return;
-    const lookup = new Map(objects.map((item) => [item.object.id, item]));
     const entities: Cesium.Entity[] = [];
     const add = (options: Cesium.Entity.ConstructorOptions) =>
       entities.push(new C.Entity(options));
@@ -182,20 +271,21 @@ export function Globe({
         },
       ];
       for (const member of pair) {
-        const sampled = new C.SampledPositionProperty(C.ReferenceFrame.FIXED);
-        sampled.setInterpolationOptions({
-          interpolationDegree: 1,
-          interpolationAlgorithm: C.LinearApproximation,
-        });
-        for (const point of member.path.points)
-          sampled.addSample(
-            C.JulianDate.fromIso8601(point.timestampUtc),
-            new C.Cartesian3(
-              point.positionEcefMeters.x,
-              point.positionEcefMeters.y,
-              point.positionEcefMeters.z,
-            ),
-          );
+        const sampled = new C.CallbackPositionProperty(
+          (date, result) => {
+            const point =
+              date &&
+              interpolatePosition(
+                member.path,
+                C.JulianDate.toDate(date).getTime(),
+              );
+            return point
+              ? C.Cartesian3.fromElements(point.x, point.y, point.z, result)
+              : undefined;
+          },
+          false,
+          C.ReferenceFrame.FIXED,
+        );
         add({
           id: `encounter-object:${member.orbit.object.id}`,
           name: member.orbit.object.name,
@@ -286,49 +376,33 @@ export function Globe({
       viewer.scene.requestRender();
       return;
     }
-    for (const position of positions) {
-      const orbit = lookup.get(position.orbitalObjectId);
-      if (!orbit || (position.orbitalObjectId === selectedId && trajectory))
-        continue;
-      const { x, y, z } = position.positionEcefMeters;
-      const color = C.Color.fromCssColorString(
-        kindColor[objectKind(orbit.object.objectType)],
-      );
-      add({
-        id: `object:${position.orbitalObjectId}`,
-        name: orbit.object.name,
-        position: new C.Cartesian3(x, y, z),
-        point: {
-          pixelSize: position.orbitalObjectId === selectedId ? 8 : 4,
-          color,
-          outlineColor: C.Color.fromCssColorString("#07151b"),
-          outlineWidth: 1,
+    if (selected) {
+      const sampled = new C.CallbackPositionProperty(
+        (date, result) => {
+          if (!date) return undefined;
+          result ??= new C.Cartesian3();
+          const time = C.JulianDate.toDate(date).getTime();
+          if (!frameState.current.preview) {
+            const current = catalogLayer.current?.position(
+              selected.object.id,
+              selected.version,
+              time,
+              result,
+            );
+            if (current) return current;
+          }
+          const point = trajectory && interpolatePosition(trajectory, time);
+          return point
+            ? C.Cartesian3.fromElements(point.x, point.y, point.z, result)
+            : undefined;
         },
-      });
-    }
-    if (trajectory && selected) {
-      // API positions are Earth-fixed metres, so use FIXED (not TEME / INERTIAL).
-      const sampled = new C.SampledPositionProperty(C.ReferenceFrame.FIXED);
-      sampled.setInterpolationOptions({
-        interpolationDegree: 1,
-        interpolationAlgorithm: C.LinearApproximation,
-      });
-      for (const point of trajectory.points) {
-        const { x, y, z } = point.positionEcefMeters;
-        sampled.addSample(
-          C.JulianDate.fromIso8601(point.timestampUtc),
-          new C.Cartesian3(x, y, z),
-        );
-      }
+        false,
+        C.ReferenceFrame.FIXED,
+      );
       add({
         id: `object:${selected.object.id}`,
         name: selected.object.name,
         position: sampled,
-        availability: new C.TimeIntervalCollection([
-          C.TimeInterval.fromIso8601({
-            iso8601: `${trajectory.startUtc}/${trajectory.endUtc}`,
-          }),
-        ]),
         point: {
           pixelSize: 8,
           color: C.Color.fromCssColorString("#f3faf6"),
@@ -350,49 +424,14 @@ export function Globe({
     }
     reconcileGlobeEntities(viewer.entities, entities);
     viewer.scene.requestRender();
-  }, [ready, objects, positions, selected, selectedId, trajectory, encounter]);
+  }, [ready, selected, trajectory, encounter]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
     const C = window.Cesium;
     if (!ready || !viewer || !C) return;
-    viewer.clock.currentTime = C.JulianDate.fromDate(new Date(timestamp));
-    if (encounter) {
-      viewer.scene.requestRender();
-      return;
-    }
-    for (const position of positions) {
-      if (position.orbitalObjectId === selectedId && trajectory) continue;
-      const entity = viewer.entities.getById(
-        `object:${position.orbitalObjectId}`,
-      );
-      if (entity)
-        entity.show = !preview && isCurrentPosition(position, timestamp);
-    }
-    const path = viewer.entities.getById("prediction-path");
-    if (path && trajectory && predictionLine.current) {
-      const pathPositions = predictionPath(
-        trajectory,
-        timestamp,
-        periodMinutes,
-      ).map(({ x, y, z }) => new C.Cartesian3(x, y, z));
-      path.show = showTrajectory && pathPositions.length > 1;
-      predictionLine.current.setPositions(pathPositions);
-    }
     viewer.scene.requestRender();
-  }, [
-    ready,
-    timestamp,
-    preview,
-    positions,
-    trajectory,
-    selectedId,
-    showTrajectory,
-    periodMinutes,
-    objects,
-    selected,
-    encounter,
-  ]);
+  }, [ready, timestamp, preview, showTrajectory, encounter]);
 
   useEffect(() => {
     const viewer = viewerRef.current;

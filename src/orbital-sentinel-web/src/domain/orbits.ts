@@ -1,3 +1,5 @@
+import { hermiteWeights } from "./motion";
+
 export interface OrbitalObject {
   id: string;
   noradCatalogId: number | null;
@@ -45,6 +47,7 @@ export interface TrajectoryPoint {
   positionEcefMeters: EcefPosition;
   altitudeKilometers?: number | null;
   speedKilometersPerSecond?: number | null;
+  velocityEcefMetersPerSecond?: EcefPosition | null;
 }
 export interface ObjectPosition extends TrajectoryPoint {
   orbitalObjectId: string;
@@ -112,7 +115,7 @@ export function elementAge(
   return { label: `${Math.floor(age / 24)}d old`, stale: true };
 }
 
-/** Linear visualization interpolation only. Never extrapolate a prediction. */
+/** Use backend velocity derivatives when present; older persisted paths remain linear. */
 export function interpolatePosition(
   trajectory: Trajectory,
   timestamp: number,
@@ -138,6 +141,21 @@ export function interpolatePosition(
   const fraction =
     (timestamp - Date.parse(left.timestampUtc)) /
     (Date.parse(right.timestampUtc) - Date.parse(left.timestampUtc));
+  if (left.velocityEcefMetersPerSecond && right.velocityEcefMetersPerSecond) {
+    const w = hermiteWeights(
+      fraction,
+      (Date.parse(right.timestampUtc) - Date.parse(left.timestampUtc)) / 1000,
+    );
+    const a = left.positionEcefMeters,
+      b = right.positionEcefMeters;
+    const va = left.velocityEcefMetersPerSecond,
+      vb = right.velocityEcefMetersPerSecond;
+    return {
+      x: w[0] * a.x + w[1] * va.x + w[2] * b.x + w[3] * vb.x,
+      y: w[0] * a.y + w[1] * va.y + w[2] * b.y + w[3] * vb.y,
+      z: w[0] * a.z + w[1] * va.z + w[2] * b.z + w[3] * vb.z,
+    };
+  }
   return {
     x:
       left.positionEcefMeters.x +

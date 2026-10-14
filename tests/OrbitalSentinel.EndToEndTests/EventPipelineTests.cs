@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -67,11 +68,13 @@ public sealed class EventPipelineTests : IAsyncLifetime
         await worker.HandleAsync(payload, CancellationToken.None);
         await worker.HandleAsync(payload, CancellationToken.None);
         Assert.Equal(1, await connection.ExecuteScalarAsync<int>("SELECT count(*) FROM processed_messages WHERE consumer_name='trajectory-propagation'"));
+        var clock = new MotionClock { Now = DateTimeOffset.UtcNow };
         using var factory = new WebApplicationFactory<ApiAssemblyMarker>().WithWebHostBuilder(builder =>
         {
             builder.UseSetting("ConnectionStrings:Postgres", database.GetConnectionString());
             builder.UseSetting("Kafka:BootstrapServers", options.BootstrapServers);
             builder.UseSetting("Prediction:PrecomputeTrajectories", "false");
+            builder.ConfigureServices(services => services.AddSingleton<TimeProvider>(clock));
         });
         using var client = factory.CreateClient();
         var path = await client.GetFromJsonAsync<Trajectory>($"/api/orbital-objects/{id}/trajectory");
@@ -80,6 +83,27 @@ public sealed class EventPipelineTests : IAsyncLifetime
         Assert.All(path.Points, p => Assert.True(p.SpeedKilometersPerSecond > 0));
         var positions = await client.GetFromJsonAsync<ObjectPosition[]>("/api/orbital-objects/positions");
         Assert.Equal(id, Assert.Single(positions!).OrbitalObjectId);
+        var motionResponse = await client.GetAsync("/api/orbital-objects/motion");
+        var motion = await motionResponse.Content.ReadFromJsonAsync<CatalogMotion>();
+        Assert.Equal(id, Assert.Single(motion!.Objects).OrbitalObjectId);
+        Assert.Equal(30, motion.Objects[0].States.Length);
+        Assert.All(path.Points, p => Assert.NotNull(p.VelocityEcefMetersPerSecond));
+        // Concurrent viewers share the same generated buffer, including its identity.
+        var copies = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => client.GetFromJsonAsync<CatalogMotion>("/api/orbital-objects/motion")));
+        Assert.All(copies, copy => Assert.Equal(copies[0]!.Id, copy!.Id));
+        using var conditional = new HttpRequestMessage(HttpMethod.Get, "/api/orbital-objects/motion");
+        conditional.Headers.IfNoneMatch.Add(new System.Net.Http.Headers.EntityTagHeaderValue($"\"{copies[0]!.Id}\""));
+        var unchanged = await client.SendAsync(conditional);
+        Assert.Equal(HttpStatusCode.NotModified, unchanged.StatusCode);
+        clock.Now = clock.Now.AddMinutes(1);
+        using var refresh = new HttpRequestMessage(HttpMethod.Get, "/api/orbital-objects/motion");
+        refresh.Headers.IfNoneMatch.Add(conditional.Headers.IfNoneMatch.Single());
+        var refreshed = await client.SendAsync(refresh);
+        Assert.Equal(HttpStatusCode.OK, refreshed.StatusCode);
+        var next = (await refreshed.Content.ReadFromJsonAsync<CatalogMotion>())!;
+        Assert.NotEqual(motion.Id, next.Id);
+        Assert.Equal(motion.StartUtc.AddMinutes(1), next.StartUtc);
+        Assert.Equal(motion.Objects[0].States.Skip(12), next.Objects[0].States.Take(18));
         Assert.Equal(0, await connection.ExecuteScalarAsync<int>("SELECT count(*) FROM trajectory_predictions"));
     }
 
@@ -247,5 +271,10 @@ public sealed class EventPipelineTests : IAsyncLifetime
         producer?.Dispose();
         if (dataSource is not null) await dataSource.DisposeAsync();
         await Task.WhenAll(database.DisposeAsync().AsTask(), kafka.DisposeAsync().AsTask());
+    }
+    private sealed class MotionClock : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; }
+        public override DateTimeOffset GetUtcNow() => Now;
     }
 }

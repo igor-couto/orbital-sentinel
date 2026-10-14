@@ -7,23 +7,45 @@ using OrbitalSentinel.Propagation;
 
 namespace OrbitalSentinel.Runtime;
 
-/// <summary>One shared current-position snapshot; full paths are calculated only for viewed objects.</summary>
+/// <summary>Shared visualization buffers; full paths are calculated only for viewed objects.</summary>
 public sealed class CatalogVisualization(CatalogRepository catalog, IOrbitPropagator propagator,
-    IOptions<PredictionOptions> options, ILogger<CatalogVisualization> logger) : IDisposable
+    IOptions<PredictionOptions> options, ILogger<CatalogVisualization> logger, TimeProvider clock) : IDisposable
 {
     private readonly SemaphoreSlim positionsGate = new(1);
     private readonly SemaphoreSlim trajectoryGate = new(1);
+    private readonly SemaphoreSlim motionGate = new(1);
+    private CatalogMotion? motion;
     private readonly MemoryCache paths = new(new MemoryCacheOptions { SizeLimit = 32 });
     private IReadOnlyList<OrbitSnapshot> orbits = [];
     private IReadOnlyList<ObjectPosition> positions = [];
     private DateTimeOffset catalogExpires, positionsExpires;
+
+    public async Task<CatalogMotion> GetMotionAsync(CancellationToken ct)
+    {
+        await motionGate.WaitAsync(ct);
+        try
+        {
+            var now = clock.GetUtcNow();
+            var start = DateTimeOffset.FromUnixTimeSeconds(
+                now.ToUnixTimeSeconds() / CatalogMotionPredictor.RefreshSeconds * CatalogMotionPredictor.RefreshSeconds);
+            if (motion is not null && motion.StartUtc == start) return motion;
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var snapshot = await catalog.ListAllAsync(ct);
+            var next = CatalogMotionPredictor.Build(snapshot, propagator, start, ct);
+            motion = next;
+            logger.LogInformation("Motion buffer: {Available}/{Total} objects in {ElapsedMs} ms, valid until {EndUtc}",
+                next.Objects.Count, snapshot.Count, watch.ElapsedMilliseconds, next.EndUtc);
+            return next;
+        }
+        finally { motionGate.Release(); }
+    }
 
     public async Task<IReadOnlyList<ObjectPosition>> GetPositionsAsync(CancellationToken ct)
     {
         await positionsGate.WaitAsync(ct);
         try
         {
-            var now = DateTimeOffset.UtcNow;
+            var now = clock.GetUtcNow();
             if (positionsExpires > now) return positions;
             if (catalogExpires <= now)
             {
@@ -55,7 +77,7 @@ public sealed class CatalogVisualization(CatalogRepository catalog, IOrbitPropag
         await trajectoryGate.WaitAsync(ct);
         try
         {
-            var now = DateTimeOffset.UtcNow;
+            var now = clock.GetUtcNow();
             var start = new DateTimeOffset(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, TimeSpan.Zero);
             var key = (orbit.Object.Id, orbit.Version, start);
             if (paths.TryGetValue<Trajectory>(key, out var cached)) return cached!;
@@ -67,5 +89,5 @@ public sealed class CatalogVisualization(CatalogRepository catalog, IOrbitPropag
         finally { trajectoryGate.Release(); }
     }
 
-    public void Dispose() { paths.Dispose(); positionsGate.Dispose(); trajectoryGate.Dispose(); }
+    public void Dispose() { paths.Dispose(); positionsGate.Dispose(); trajectoryGate.Dispose(); motionGate.Dispose(); }
 }
