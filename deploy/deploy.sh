@@ -24,7 +24,7 @@ select_docker_command
 
 # Serialise manual executions too; no other application is stopped or pruned.
 exec 9>"$app_root/deploy.lock"
-flock -n 9 || { echo 'Another Orbital Sentinel deployment is running.' >&2; exit 1; }
+flock -n 9 || { echo 'Another Orbital Sentinel deployment or manual backup is running.' >&2; exit 1; }
 
 if [[ ! -e "$app_root/.env" ]]; then
   if "${docker_command[@]}" volume inspect orbital-sentinel-production_postgres-data >/dev/null 2>&1; then
@@ -58,17 +58,6 @@ show_failure() {
 compose config --quiet
 # Download everything before touching the running stack.
 compose pull
-
-# Start the database first so even a stopped existing database is backed up.
-if ! compose up -d --wait --wait-timeout 180 postgres; then
-  show_failure
-  exit 1
-fi
-mkdir -p "$app_root/backups"
-backup="$app_root/backups/$(date -u +%Y%m%dT%H%M%SZ)-$image_tag.dump"
-echo 'Saving a PostgreSQL backup before application startup migrations...'
-compose exec -T postgres pg_dump -U orbital -d orbital_sentinel -Fc > "$backup.partial"
-mv -- "$backup.partial" "$backup"
 
 echo 'Starting PostgreSQL, Kafka, API, worker, and frontend...'
 if ! compose up -d --wait --wait-timeout 300; then

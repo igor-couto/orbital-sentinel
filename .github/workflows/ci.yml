@@ -72,6 +72,7 @@ jobs:
           shellcheck -x deploy/*.sh tests/deployment/*.sh
           bash tests/deployment/docker-access.test.sh
           bash tests/deployment/smoke-test.test.sh
+          bash tests/deployment/backup-postgres.test.sh
 
   docker_image:
     name: Build and push ARM64 images
@@ -150,8 +151,8 @@ jobs:
           set -euo pipefail
           SSH_PORT=${SSH_PORT:-22}
           release="apps/orbital-sentinel/releases/$IMAGE_TAG"
-          ssh -o BatchMode=yes -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "umask 077; mkdir -p '$release'"
-          scp -o BatchMode=yes -P "$SSH_PORT" compose.production.yaml deploy/deploy.sh deploy/smoke-test.sh deploy/docker-access.sh \
+          ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=6 -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "umask 077; mkdir -p '$release'"
+          scp -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=6 -P "$SSH_PORT" compose.production.yaml deploy/deploy.sh deploy/smoke-test.sh deploy/docker-access.sh deploy/backup-postgres.sh \
             "$SSH_USER@$SSH_HOST:$release/"
 
       - name: Deploy complete stack and verify web, API, and SignalR
@@ -163,5 +164,5 @@ jobs:
           set -euo pipefail
           SSH_PORT=${SSH_PORT:-22}
           image_prefix="${IMAGE_PREFIX,,}"
-          printf '%s\n' "$GHCR_TOKEN" | ssh -o BatchMode=yes -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+          printf '%s\n' "$GHCR_TOKEN" | ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=6 -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
             "bash 'apps/orbital-sentinel/releases/$IMAGE_TAG/deploy.sh' '$image_prefix' '$IMAGE_TAG' '$GHCR_USER'"
