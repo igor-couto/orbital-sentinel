@@ -97,7 +97,7 @@ jobs:
           image_prefix="${IMAGE_PREFIX,,}"
           for target in api workers; do
             "${docker_command[@]}" build \
-              --platform linux/arm64 --target "$target" \
+              --pull --platform linux/arm64 --target "$target" \
               --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
               --tag "$image_prefix-$target:$IMAGE_TAG" \
               --tag "$image_prefix-$target:latest" --push .
