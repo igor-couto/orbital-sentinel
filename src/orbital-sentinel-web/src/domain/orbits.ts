@@ -30,6 +30,17 @@ export interface OrbitSnapshot {
   ingestedAt: string;
 }
 
+/** The catalog needs identity and revision; orbital elements are loaded on selection. */
+export interface CatalogEntry {
+  object: Omit<OrbitalObject, "updatedAt">;
+  version: number;
+}
+
+export interface CatalogSnapshot {
+  items: CatalogEntry[];
+  totalCount: number;
+}
+
 export interface CatalogPage {
   items: OrbitSnapshot[];
   totalCount: number;

@@ -42,6 +42,8 @@ public static class RuntimeServices
         services.AddSingleton<ConjunctionApplication>();
         services.AddSingleton<IOrbitPropagator, Sgp4OrbitPropagator>();
         services.AddSingleton(TimeProvider.System);
+        services.AddSingleton(sp => new CatalogBootstrapCache(
+            sp.GetRequiredService<CatalogRepository>().GetBootstrapAsync, sp.GetRequiredService<TimeProvider>()));
         services.AddSingleton<CatalogVisualization>();
         services.AddOptions<KafkaOptions>().Bind(configuration.GetSection("Kafka"))
             .ValidateDataAnnotations().Validate(x => new[] { x.OrbitTopic, x.TrajectoryTopic, x.DeadLetterTopic, x.PredictionRunTopic, x.ConjunctionTopic }.Distinct().Count() == 5,

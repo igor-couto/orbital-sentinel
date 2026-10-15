@@ -4,16 +4,17 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Globe } from "./components/Globe";
 import { Icon } from "./components/Icon";
 import { formatUtc, interpolatePosition, objectKind } from "./domain/orbits";
-import type { ObjectKind, OrbitSnapshot, PathView } from "./domain/orbits";
+import type { CatalogEntry, ObjectKind, PathView } from "./domain/orbits";
 import { motionCovers } from "./domain/motion";
 import { useSelectedTrajectory, useTrafficData } from "./hooks/useTrafficData";
 import { useConjunctions } from "./hooks/useConjunctions";
+import { useSelectedOrbit } from "./hooks/useSelectedOrbit";
 import {
   ConjunctionDetails,
   ConjunctionPanel,
 } from "./components/ConjunctionPanel";
 
-const emptyObjects: OrbitSnapshot[] = [];
+const emptyObjects: CatalogEntry[] = [];
 const filterOptions: Array<{ id: "all" | ObjectKind; label: string }> = [
   { id: "all", label: "All objects" },
   { id: "payload", label: "Payloads" },
@@ -43,7 +44,11 @@ export function App() {
   const about = useRef<HTMLDialogElement>(null);
   const privacy = useRef<HTMLDialogElement>(null);
   const objects = data.catalog.value?.items ?? emptyObjects;
-  const selected = objects.find((item) => item.object.id === selectedId);
+  const selectedEntry = objects.find((item) => item.object.id === selectedId);
+  const selectedOrbit = useSelectedOrbit(selectedEntry, data.revision);
+  // The cached catalog can briefly lag ingestion. Keep selected geometry and
+  // facts on the newer complete snapshot while its summary catches up.
+  const selected = selectedOrbit.value ?? selectedEntry;
   const trajectoryState = useSelectedTrajectory(
     selected,
     data.trajectoryUpdates[selectedId ?? ""] ?? 0,
@@ -284,7 +289,7 @@ export function App() {
                     <div className="empty-state">
                       <span className="loading-ring" />
                       <h3>Loading catalog</h3>
-                      <p>Retrieving orbital elements from the service.</p>
+                      <p>Retrieving the object catalog from the service.</p>
                     </div>
                   )}
                   {data.catalog.error && (
@@ -398,6 +403,12 @@ export function App() {
               objects={objects}
               motion={motion}
               selected={selected}
+              orbitalPeriodMinutes={
+                selectedOrbit.value
+                  ? 1440 /
+                    selectedOrbit.value.elements.meanMotionRevolutionsPerDay
+                  : undefined
+              }
               trajectory={trajectory}
               timestamp={timestamp}
               preview={previewTime !== null}
@@ -550,13 +561,35 @@ export function App() {
                 </div>
                 {selected ? (
                   <>
-                    <ObjectFacts
-                      orbit={selected}
-                      trajectory={trajectory}
-                      timestamp={timestamp}
-                      now={now}
-                      revision={data.revision}
-                    />
+                    {selectedOrbit.value ? (
+                      <ObjectFacts
+                        orbit={selectedOrbit.value}
+                        trajectory={trajectory}
+                        timestamp={timestamp}
+                        now={now}
+                        revision={data.revision}
+                      />
+                    ) : (
+                      <section
+                        className="object-facts-section"
+                        aria-label="Selected object facts"
+                      >
+                        <div className="selected-summary">
+                          <h2>{selected.object.name}</h2>
+                        </div>
+                        <p className="prediction-status" role="status">
+                          {selectedOrbit.error ?? "Loading orbital details…"}
+                        </p>
+                        {selectedOrbit.error && (
+                          <button
+                            className="text-button"
+                            onClick={data.refresh}
+                          >
+                            Try again
+                          </button>
+                        )}
+                      </section>
+                    )}
                     <div className="prediction-section">
                       <div className="subheading">
                         <h3>Trajectory prediction</h3>

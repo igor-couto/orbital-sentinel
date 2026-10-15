@@ -2,67 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HubConnectionBuilder, LogLevel } from "@microsoft/signalr";
 import { getCatalog, getTrajectory } from "../api/client";
 import { createMotionWorkerClient } from "../api/motionWorkerClient";
-import type { CatalogPage, OrbitSnapshot, Trajectory } from "../domain/orbits";
+import type {
+  CatalogEntry,
+  CatalogSnapshot,
+  Trajectory,
+} from "../domain/orbits";
+import { usePolledResource } from "./usePolledResource";
 
 export type ConnectionState =
   "connecting" | "live" | "reconnecting" | "polling";
-interface Resource<T> {
-  value: T | null;
-  error: string | null;
-  loading: boolean;
-  receivedAt: number | null;
-}
-const emptyResource = <T>(): Resource<T> => ({
-  value: null,
-  error: null,
-  loading: true,
-  receivedAt: null,
-});
-
-function usePolledResource<T>(
-  load: (signal: AbortSignal) => Promise<T>,
-  intervalMs: number,
-  revision: number,
-): Resource<T> {
-  const [resource, setResource] = useState<Resource<T>>(emptyResource);
-  useEffect(() => {
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    async function refresh() {
-      try {
-        const value = await load(controller.signal);
-        if (!controller.signal.aborted)
-          setResource({
-            value,
-            error: null,
-            loading: false,
-            receivedAt: Date.now(),
-          });
-      } catch (error) {
-        if (!controller.signal.aborted)
-          setResource((previous) => ({
-            ...previous,
-            loading: false,
-            error:
-              error instanceof Error
-                ? error.message
-                : "Unable to load orbital data.",
-          }));
-      } finally {
-        if (!controller.signal.aborted) timer = setTimeout(refresh, intervalMs);
-      }
-    }
-    void refresh();
-    return () => {
-      controller.abort();
-      clearTimeout(timer);
-    };
-  }, [load, intervalMs, revision]);
-  return resource;
-}
-
 export function useTrafficData() {
   const [revision, setRevision] = useState(0);
+  const [catalogRevision, setCatalogRevision] = useState(0);
   const [manualRevision, setManualRevision] = useState(0);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [trajectoryUpdates, setTrajectoryUpdates] = useState<
@@ -76,7 +27,11 @@ export function useTrafficData() {
     setRevision((previous) => previous + 1);
     setManualRevision((previous) => previous + 1);
   }, []);
-  const catalog = usePolledResource<CatalogPage>(getCatalog, 300_000, revision);
+  const catalog = usePolledResource<CatalogSnapshot>(
+    getCatalog,
+    300_000,
+    revision + catalogRevision,
+  );
   const motionClient = useMemo(createMotionWorkerClient, []);
   const motion = usePolledResource(motionClient.load, 30_000, revision);
   useEffect(() => () => motionClient.dispose(), [motionClient]);
@@ -86,20 +41,27 @@ export function useTrafficData() {
   useEffect(() => {
     const buffer = motion.value,
       items = catalog.value?.items;
-    if (!buffer || !items || reconciledMotion.current === buffer.id) return;
-    reconciledMotion.current = buffer.id;
+    if (!buffer || !items) return;
     const revisions = new Map(
       items.map((item) => [item.object.id, item.version]),
     );
     // Catch new elements even when on-demand propagation emits no Kafka notification.
-    if (
-      buffer.objects.some(
-        (item) =>
-          (revisions.get(item.orbitalObjectId) ?? 0) < item.orbitVersion,
-      )
-    )
-      invalidate();
-  }, [motion.value, catalog.value, invalidate]);
+    const needsRefresh = buffer.objects.some(
+      (item) => (revisions.get(item.orbitalObjectId) ?? 0) < item.orbitVersion,
+    );
+    if (!needsRefresh) return;
+    const refreshCatalog = () => setCatalogRevision((previous) => previous + 1);
+    if (reconciledMotion.current !== buffer.id) {
+      reconciledMotion.current = buffer.id;
+      refreshCatalog();
+      return;
+    }
+    // A new motion buffer can arrive before the shared catalog cache expires.
+    // Reconcile again after its TTL instead of leaving missing/new revisions
+    // until the next five-minute poll. Only refetch the compact catalog.
+    const timer = setTimeout(refreshCatalog, 30_000);
+    return () => clearTimeout(timer);
+  }, [motion.value, catalog.value]);
 
   useEffect(() => {
     let disposed = false;
@@ -184,7 +146,7 @@ export interface TrajectoryState {
   error: string | null;
 }
 export function useSelectedTrajectory(
-  selected: OrbitSnapshot | undefined,
+  selected: CatalogEntry | undefined,
   updateVersion: number,
   revision: number,
 ): TrajectoryState {

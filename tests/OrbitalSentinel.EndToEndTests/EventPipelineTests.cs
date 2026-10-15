@@ -72,6 +72,17 @@ public sealed class EventPipelineTests : IAsyncLifetime
         var catalog = factory.Services.GetRequiredService<CatalogRepository>();
         await catalog.UpsertAsync(new CatalogImport(id, null, "On-demand spacecraft", null, "Unknown",
             new OrbitalElements(DateTimeOffset.UtcNow, 15.5, 0.0004, 51.64, 20, 30, 40, 0.00005, 0, 0)));
+        var bootstrap = await client.GetFromJsonAsync<CatalogBootstrap>("/api/orbital-objects/catalog");
+        Assert.NotNull(bootstrap);
+        Assert.Equal(1, bootstrap.TotalCount);
+        var entry = Assert.Single(bootstrap.Items);
+        Assert.Equal(id, entry.Object.Id);
+        Assert.Equal("On-demand spacecraft", entry.Object.Name);
+        Assert.Equal(1, entry.Version);
+        var complete = await client.GetFromJsonAsync<OrbitSnapshot>($"/api/orbital-objects/{id}");
+        Assert.NotNull(complete);
+        Assert.Equal(entry.Object.Id, complete.Object.Id);
+        Assert.Equal(15.5, complete.Elements.MeanMotionRevolutionsPerDay);
         var path = await client.GetFromJsonAsync<Trajectory>($"/api/orbital-objects/{id}/trajectory");
         Assert.NotNull(path);
         Assert.Equal(1441, path.Points.Count);

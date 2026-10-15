@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { OrbitSnapshot } from "../domain/orbits";
+import type { CatalogEntry } from "../domain/orbits";
 import { kindLabel, objectKind } from "../domain/orbits";
 import { Icon } from "./Icon";
 
@@ -13,7 +13,7 @@ export function CatalogList({
   loading,
   children,
 }: {
-  items: OrbitSnapshot[];
+  items: CatalogEntry[];
   selectedId: string | null;
   onSelect: (id: string) => void;
   loading: boolean;

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type * as Cesium from "cesium";
 import { interpolatePosition } from "../domain/orbits";
-import type { OrbitSnapshot, PathView, Trajectory } from "../domain/orbits";
+import type { CatalogEntry, PathView, Trajectory } from "../domain/orbits";
 import { Icon } from "./Icon";
 import type { ConjunctionVisualization } from "../domain/conjunctions";
 import { reconcileGlobeEntities } from "./globeEntities";
@@ -18,9 +18,10 @@ declare global {
 }
 
 interface Props {
-  objects: OrbitSnapshot[];
+  objects: CatalogEntry[];
   motion: CatalogMotion | null;
-  selected: OrbitSnapshot | undefined;
+  selected: CatalogEntry | undefined;
+  orbitalPeriodMinutes: number | undefined;
   trajectory: Trajectory | null;
   timestamp: number;
   preview: boolean;
@@ -35,6 +36,7 @@ export function Globe({
   objects,
   motion,
   selected,
+  orbitalPeriodMinutes,
   trajectory,
   timestamp,
   preview,
@@ -49,6 +51,7 @@ export function Globe({
   const catalogLayer = useRef<CatalogMotionLayer | null>(null);
   const frameState = useRef({
     selected,
+    orbitalPeriodMinutes,
     trajectory,
     timestamp,
     preview,
@@ -58,6 +61,7 @@ export function Globe({
   });
   frameState.current = {
     selected,
+    orbitalPeriodMinutes,
     trajectory,
     timestamp,
     preview,
@@ -185,11 +189,11 @@ export function Globe({
         const path = predictionLine.current;
         if (path && !state.encounter) {
           const vertices =
-            state.selected && state.trajectory
+            state.selected && state.trajectory && state.orbitalPeriodMinutes
               ? predictionPath(
                   state.trajectory,
                   time,
-                  1440 / state.selected.elements.meanMotionRevolutionsPerDay,
+                  state.orbitalPeriodMinutes,
                   state.pathView,
                 ).map((p) => new C.Cartesian3(p.x, p.y, p.z))
               : [];

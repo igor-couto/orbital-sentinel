@@ -1,5 +1,6 @@
 import type {
   CatalogPage,
+  CatalogSnapshot,
   ObjectPosition,
   OrbitSnapshot,
   Trajectory,
@@ -10,6 +11,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public readonly status: number,
+    public readonly retryAfterMs: number | null = null,
   ) {
     super(message);
   }
@@ -125,6 +127,55 @@ export function parseCatalog(value: unknown): CatalogPage {
   return value as unknown as CatalogPage;
 }
 
+export function parseCatalogSnapshot(value: unknown): CatalogSnapshot {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.items) ||
+    !isInteger(value.totalCount) ||
+    value.totalCount !== value.items.length
+  )
+    return invalid();
+  const ids = new Set<string>();
+  for (const item of value.items) {
+    if (
+      !isRecord(item) ||
+      !isRecord(item.object) ||
+      typeof item.object.id !== "string" ||
+      !item.object.id ||
+      ids.has(item.object.id) ||
+      typeof item.object.name !== "string" ||
+      typeof item.object.objectType !== "string" ||
+      !(
+        item.object.internationalDesignator === null ||
+        typeof item.object.internationalDesignator === "string"
+      ) ||
+      !(
+        item.object.noradCatalogId === null ||
+        (isInteger(item.object.noradCatalogId) &&
+          item.object.noradCatalogId > 0)
+      ) ||
+      !isInteger(item.version) ||
+      item.version < 1
+    )
+      return invalid();
+    ids.add(item.object.id);
+  }
+  return value as unknown as CatalogSnapshot;
+}
+
+export function parseOrbitSnapshot(
+  value: unknown,
+  objectId: string,
+): OrbitSnapshot {
+  const snapshot = parseCatalog({
+    items: [value],
+    totalCount: 1,
+    page: 1,
+    pageSize: 1,
+  }).items[0];
+  return snapshot.object.id === objectId ? snapshot : invalid();
+}
+
 export function parsePositions(value: unknown): ObjectPosition[] {
   if (
     !Array.isArray(value) ||
@@ -197,9 +248,21 @@ export async function request(
     } catch {
       /* Non-JSON failures still get a useful HTTP-status message. */
     }
+    const retryAfter = response.headers.get("Retry-After");
+    const retryAfterMs =
+      retryAfter === null
+        ? NaN
+        : /^\d+$/.test(retryAfter.trim())
+          ? Number(retryAfter) * 1000
+          : Date.parse(retryAfter) - Date.now();
     throw new ApiError(
       title ?? `The orbital-data service returned HTTP ${response.status}.`,
       response.status,
+      [429, 503].includes(response.status) &&
+        Number.isFinite(retryAfterMs) &&
+        retryAfterMs > 0
+        ? retryAfterMs
+        : null,
     );
   }
   return response;
@@ -213,37 +276,22 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
-export async function getCatalog(signal: AbortSignal): Promise<CatalogPage> {
-  const loadPage = async (page: number, pageSize: number) => {
-    const response = await request(
-      `/api/orbital-objects?page=${page}&pageSize=${pageSize}`,
-      signal,
-    );
-    const result = parseCatalog(await readJson(response));
-    if (result.page !== page || result.items.length > result.pageSize)
-      return invalid();
-    return result;
-  };
-  const first = await loadPage(1, 500);
-  const objects = new Map<string, OrbitSnapshot>();
-  for (const item of first.items) objects.set(item.object.id, item);
-  // Keep HTTP pages bounded, but load the whole catalog. Pin the page count for
-  // this refresh so ingestion cannot extend it indefinitely while we fetch.
-  const pages = Math.ceil(first.totalCount / first.pageSize);
-  let totalCount = first.totalCount;
-  for (let page = 2; page <= pages; page++) {
-    const next = await loadPage(page, first.pageSize);
-    if (next.pageSize !== first.pageSize) return invalid();
-    for (const item of next.items) objects.set(item.object.id, item);
-    totalCount = next.totalCount;
-  }
-  // Updates between pages can move an object across a page boundary. Deduplicate
-  // its identity; the next scheduled refresh picks up concurrent additions.
-  return {
-    ...first,
-    totalCount: Math.max(totalCount, objects.size),
-    items: [...objects.values()],
-  };
+export async function getCatalog(
+  signal: AbortSignal,
+): Promise<CatalogSnapshot> {
+  const response = await request("/api/orbital-objects/catalog", signal);
+  return parseCatalogSnapshot(await readJson(response));
+}
+
+export async function getOrbitSnapshot(
+  objectId: string,
+  signal: AbortSignal,
+): Promise<OrbitSnapshot> {
+  const response = await request(
+    `/api/orbital-objects/${encodeURIComponent(objectId)}`,
+    signal,
+  );
+  return parseOrbitSnapshot(await readJson(response), objectId);
 }
 
 export async function getPositions(

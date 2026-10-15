@@ -78,6 +78,12 @@ api.MapGet("/orbital-objects", async (CatalogRepository catalog, int? page, int?
     return Results.Ok(await catalog.ListAsync(pageNumber, size, search?.Trim(), ct));
 }).WithName("ListOrbitalObjects");
 
+api.MapGet("/orbital-objects/catalog", async (CatalogBootstrapCache catalog, HttpContext context, CancellationToken ct) =>
+{
+    context.Response.Headers.CacheControl = "private, no-cache";
+    return Results.Ok(await catalog.GetAsync(ct));
+}).WithName("GetCatalogBootstrap");
+
 api.MapGet("/orbital-objects/positions", async (TrajectoryRepository trajectories, CatalogVisualization visualization,
     IOptions<PredictionOptions> prediction, CancellationToken ct) =>
     Results.Ok(prediction.Value.PrecomputeTrajectories

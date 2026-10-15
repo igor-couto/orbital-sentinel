@@ -1,6 +1,6 @@
 import type * as Cesium from "cesium";
 import { kindColor, objectKind } from "../domain/orbits";
-import type { ObjectKind, OrbitSnapshot } from "../domain/orbits";
+import type { ObjectKind, CatalogEntry } from "../domain/orbits";
 import { motionInterval, sampleMotion } from "../domain/motion";
 import type { CatalogMotion, ObjectMotion } from "../domain/motion";
 
@@ -13,7 +13,7 @@ export class CatalogMotionLayer {
   private positions = new Float64Array();
   private point: Cesium.BufferPoint;
   private hiddenId: string | undefined;
-  private objects: OrbitSnapshot[] | null = null;
+  private objects: CatalogEntry[] | null = null;
   private sphere: Cesium.BoundingSphere;
   private kinds: ObjectKind[] = [];
   private materials = new Map<ObjectKind, Cesium.BufferPointMaterial>();
@@ -36,7 +36,7 @@ export class CatalogMotionLayer {
       );
   }
 
-  setData(motion: CatalogMotion | null, objects: OrbitSnapshot[]) {
+  setData(motion: CatalogMotion | null, objects: CatalogEntry[]) {
     if (motion === this.motion && objects === this.objects) return;
     const metadataChanged = objects !== this.objects;
     this.motion = motion;

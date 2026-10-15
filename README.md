@@ -20,7 +20,7 @@ This is an engineering demonstrator, **not a system for operational spacecraft d
 - Transactional state + outbox writes, concurrent publication leases, per-object ordering, finite publication attempts, durable quarantine, and atomic consumer inbox + trajectory + outgoing-event writes.
 - SGP4 visualization: shared current positions and on-demand 24-hour trajectories at 60-second intervals, with direct position/velocity propagation. An optional Kafka-driven precomputation mode remains available for smaller catalogs.
 - A bounded in-memory cache of selected paths; regeneration does not erase orbital-element history.
-- REST catalog/search/pagination, object details, current sample positions, trajectory retrieval, ProblemDetails, and OpenAPI.
+- REST catalog bootstrap, search/pagination, object details, current sample positions, trajectory retrieval, ProblemDetails, and OpenAPI.
 - SignalR trajectory-availability notifications, with REST reconciliation when notifications are missed.
 - React/TypeScript/Cesium Earth, selection, predicted path, time preview, element freshness, and honest loading/failure states. Earth imagery and Cesium assets are served locally.
 - Real PostgreSQL/Kafka integration tests, reference-vector tests, source-adapter tests, and CI.
@@ -127,7 +127,7 @@ Strongly typed options validate on startup. Standard .NET environment variables 
 | `SignalR__KeepAliveSeconds` | 15 |
 | `SignalR__ClientTimeoutSeconds` | 45 |
 
-Both Compose configurations expose the import limit as `CELESTRAK_MAX_OBJECTS` in `.env`: `0` imports every valid, distinct object from all due groups; e.g. `500` restores a per-cycle cap. A cap does not delete previously ingested objects or their history. The browser loads all catalog pages, mounts only visible list rows, and conjunction runs include the full stored catalog. Screening cost still depends on object density and encounter count; the spatial filter does not guarantee a fixed runtime on a Raspberry Pi.
+Both Compose configurations expose the import limit as `CELESTRAK_MAX_OBJECTS` in `.env`: `0` imports every valid, distinct object from all due groups; e.g. `500` restores a per-cycle cap. A cap does not delete previously ingested objects or their history. The browser loads the full catalog through one compact `/api/orbital-objects/catalog` response containing identities, display names, classifications, and orbital revision numbers. The API shares this snapshot across requests for 30 seconds, with one database read when it expires. Full orbital elements and SATCAT details are fetched only for the selected object; the existing paginated API remains available. The dashboard refreshes the catalog every five minutes, retries transient failures with a short backoff capped at 30 seconds (respecting a longer server `Retry-After`), and retains previously loaded data during failed refreshes. It mounts only visible list rows, and conjunction runs include the full stored catalog. Screening cost still depends on object density and encounter count; the spatial filter does not guarantee a fixed runtime on a Raspberry Pi.
 
 Production Compose allows up to 60 minutes per scan and assessment publication to accommodate the Raspberry Pi (`CONJUNCTION_MAX_SCAN_MINUTES`, range 1–60); the local default remains 15 minutes. Lease renewals continue while assessments are saved, and a final token/expiry check fences the atomic commit. A timed-out run reports failure and never claims a successful empty result.
 

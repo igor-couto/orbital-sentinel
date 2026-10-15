@@ -104,6 +104,29 @@ public sealed class CatalogRepository(NpgsqlDataSource dataSource, bool publishO
         return row?.ToSnapshot();
     }
 
+    public async Task<CatalogBootstrap> GetBootstrapAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        // A single statement gives every entry and its revision the same database snapshot.
+        // Do not load element JSON or SATCAT payloads for the initial catalog display.
+        var rows = await connection.QueryAsync<CatalogRow>(new CommandDefinition("""
+            SELECT o.id AS Id, o.norad_catalog_id AS NoradCatalogId, o.name AS Name,
+                   o.international_designator AS InternationalDesignator,
+                   CASE WHEN o.object_type IN ('Unknown','UNK') AND m.object_type IN ('PAY','R/B','DEB')
+                        THEN m.object_type ELSE o.object_type END AS ObjectType,
+                   o.current_version AS Version
+            FROM orbital_objects o
+            LEFT JOIN LATERAL (
+                SELECT payload->>'OBJECT_TYPE' AS object_type FROM catalog_metadata
+                WHERE norad_catalog_id=o.norad_catalog_id ORDER BY retrieved_at DESC,group_name LIMIT 1
+            ) m ON true
+            ORDER BY o.name,o.id;
+            """, cancellationToken: cancellationToken));
+        var items = rows.Select(x => new CatalogEntry(new CatalogObjectSummary(x.Id, x.NoradCatalogId,
+            x.Name, x.InternationalDesignator, x.ObjectType), x.Version)).ToArray();
+        return new CatalogBootstrap(items, items.LongLength);
+    }
+
     public async Task<IReadOnlyList<OrbitSnapshot>> ListAllAsync(CancellationToken ct = default)
     {
         await using var connection = await dataSource.OpenConnectionAsync(ct);
@@ -153,6 +176,8 @@ public sealed class CatalogRepository(NpgsqlDataSource dataSource, bool publishO
     }
 
     private sealed record RefreshRow(Guid Id, long Version);
+    private sealed record CatalogRow(Guid Id, long? NoradCatalogId, string Name,
+        string? InternationalDesignator, string ObjectType, long Version);
     private sealed class SnapshotRow
     {
         public Guid Id { get; init; }

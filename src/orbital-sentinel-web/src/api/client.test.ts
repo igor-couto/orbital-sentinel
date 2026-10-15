@@ -2,10 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
   getCatalog,
+  getOrbitSnapshot,
   getTrajectory,
   parseCatalog,
+  parseCatalogSnapshot,
+  parseOrbitSnapshot,
   parsePositions,
   parseTrajectory,
+  request,
 } from "./client";
 
 const objectId = "a2721318-b2a4-4c77-bff7-3e167f91e9bb";
@@ -93,86 +97,86 @@ describe("orbital API boundary", () => {
       ),
     ).toThrow();
   });
-  it("loads every catalog page, including objects beyond the first 500", async () => {
-    const items = Array.from({ length: 1205 }, (_, index) => ({
-      ...catalog.items[0],
-      object: { ...catalog.items[0].object, id: `object-${index}` },
+  it("bootstraps all 20,225 objects in one compact request without orbital elements", async () => {
+    const items = Array.from({ length: 20_225 }, (_, index) => ({
+      object: {
+        id: `object-${index}`,
+        name: `Object ${index}`,
+        objectType: "Payload",
+        noradCatalogId: index + 1,
+        internationalDesignator: null,
+      },
+      version: 1,
     }));
-    const fetchMock = vi.fn().mockImplementation(async (path: string) => {
-      const url = new URL(path, "http://localhost");
-      const page = Number(url.searchParams.get("page"));
-      const pageSize = Number(url.searchParams.get("pageSize"));
-      return Response.json({
-        items: items.slice((page - 1) * pageSize, page * pageSize),
-        totalCount: items.length,
-        page,
-        pageSize,
-      });
-    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(Response.json({ items, totalCount: items.length }));
     vi.stubGlobal("fetch", fetchMock);
     const result = await getCatalog(new AbortController().signal);
     expect(result.items).toEqual(items);
-    expect(result.totalCount).toBe(1205);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result.totalCount).toBe(20_225);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/orbital-objects/catalog");
+    expect(result.items[0]).not.toHaveProperty("elements");
   });
-  it("deduplicates objects moved across page boundaries during ingestion", async () => {
-    const last = {
-      ...catalog.items[0],
-      object: { ...catalog.items[0].object, id: "last" },
-    };
+  it("rejects duplicate identities or an incomplete coherent catalog instead of hiding missing objects", () => {
+    const item = { object: catalog.items[0].object, version: 1 };
+    expect(() =>
+      parseCatalogSnapshot({ items: [item, item], totalCount: 2 }),
+    ).toThrow(ApiError);
+    expect(() =>
+      parseCatalogSnapshot({ items: [item], totalCount: 2 }),
+    ).toThrow(ApiError);
+    expect(() =>
+      parseCatalogSnapshot({ items: [item], totalCount: 0 }),
+    ).toThrow(ApiError);
+    expect(parseCatalogSnapshot({ items: [], totalCount: 0 })).toEqual({
+      items: [],
+      totalCount: 0,
+    });
+  });
+  it("rejects malformed compact entries before they reach markers or search", () => {
+    const item = { object: catalog.items[0].object, version: 1 };
+    for (const invalidItem of [
+      { ...item, version: 0 },
+      { ...item, version: 1.5 },
+      { ...item, object: { ...item.object, id: "" } },
+      { ...item, object: { ...item.object, name: null } },
+      { ...item, object: { ...item.object, objectType: null } },
+      { ...item, object: { ...item.object, noradCatalogId: -1 } },
+      { ...item, object: { ...item.object, internationalDesignator: 1 } },
+    ])
+      expect(() =>
+        parseCatalogSnapshot({ items: [invalidItem], totalCount: 1 }),
+      ).toThrow(ApiError);
+  });
+  it("surfaces bootstrap failures so the polling loop can retry without accepting partial data", async () => {
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValueOnce(
-          Response.json({ ...catalog, pageSize: 1, totalCount: 3 }),
-        )
-        .mockResolvedValueOnce(
-          Response.json({ ...catalog, page: 2, pageSize: 1, totalCount: 3 }),
-        )
-        .mockResolvedValueOnce(
-          Response.json({
-            ...catalog,
-            items: [last],
-            page: 3,
-            pageSize: 1,
-            totalCount: 3,
-          }),
-        ),
-    );
-    const result = await getCatalog(new AbortController().signal);
-    expect(result.items.map((item) => item.object.id)).toEqual([
-      objectId,
-      "last",
-    ]);
-    expect(result.totalCount).toBe(3);
-  });
-  it("fails the refresh if a later catalog page fails instead of showing a truncated catalog", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi
-        .fn()
-        .mockResolvedValueOnce(
-          Response.json({ ...catalog, pageSize: 1, totalCount: 2 }),
-        )
-        .mockResolvedValueOnce(new Response("", { status: 503 })),
+      vi.fn().mockResolvedValue(new Response("", { status: 503 })),
     );
     await expect(
       getCatalog(new AbortController().signal),
     ).rejects.toMatchObject({ status: 503 });
   });
-  it("rejects a repeated page instead of quietly omitting the remaining objects", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi
-        .fn()
-        .mockImplementation(async () =>
-          Response.json({ ...catalog, pageSize: 1, totalCount: 2 }),
-        ),
-    );
-    await expect(
-      getCatalog(new AbortController().signal),
-    ).rejects.toMatchObject({ status: 502 });
+  it("fetches complete elements only for the selected identity and rejects another object's response", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(Response.json(catalog.items[0]));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(
+      await getOrbitSnapshot(objectId, new AbortController().signal),
+    ).toEqual(catalog.items[0]);
+    expect(fetchMock.mock.calls[0][0]).toBe(`/api/orbital-objects/${objectId}`);
+    expect(() =>
+      parseOrbitSnapshot(catalog.items[0], "another-object"),
+    ).toThrow(ApiError);
+    expect(() =>
+      parseOrbitSnapshot(
+        { object: catalog.items[0].object, version: 1 },
+        objectId,
+      ),
+    ).toThrow(ApiError);
   });
   it("accepts an object with an internal identifier and no NORAD identifier", () => {
     expect(parseCatalog(catalog).items[0].object.noradCatalogId).toBeNull();
@@ -297,6 +301,63 @@ describe("orbital API boundary", () => {
       message: "The service returned an invalid orbital-data response.",
     });
   });
+  it.each([429, 503])(
+    "preserves Retry-After seconds for HTTP %s",
+    async (status) => {
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValue(
+            new Response("", { status, headers: { "Retry-After": "45" } }),
+          ),
+      );
+      await expect(
+        request("/api/orbital-objects/catalog", new AbortController().signal),
+      ).rejects.toMatchObject({ status, retryAfterMs: 45_000 });
+    },
+  );
+  it("preserves a future Retry-After HTTP date", async () => {
+    const now = Date.parse("2026-10-15T10:00:00Z");
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValue(
+            new Response("", {
+              status: 503,
+              headers: { "Retry-After": new Date(now + 60_000).toUTCString() },
+            }),
+          ),
+      );
+      await expect(
+        request("/api/orbital-objects/catalog", new AbortController().signal),
+      ).rejects.toMatchObject({ retryAfterMs: 60_000 });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+  it.each(["invalid", "-10", "0", "Thu, 01 Jan 1970 00:00:00 GMT"])(
+    "ignores an unusable Retry-After value %s",
+    async (header) => {
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValue(
+            new Response("", {
+              status: 503,
+              headers: { "Retry-After": header },
+            }),
+          ),
+      );
+      await expect(
+        request("/api/orbital-objects/catalog", new AbortController().signal),
+      ).rejects.toMatchObject({ retryAfterMs: null });
+    },
+  );
   it("preserves caller cancellation rather than rendering an outage", async () => {
     const controller = new AbortController();
     controller.abort();
