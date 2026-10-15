@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
+using Microsoft.Net.Http.Headers;
 using OrbitalSentinel.Api;
 using OrbitalSentinel.Core;
 using OrbitalSentinel.Infrastructure;
@@ -93,10 +94,15 @@ api.MapGet("/orbital-objects/positions", async (TrajectoryRepository trajectorie
 api.MapGet("/orbital-objects/motion", async (CatalogVisualization visualization, HttpContext context, CancellationToken ct) =>
 {
     var motion = await visualization.GetMotionAsync(ct);
-    var etag = $"\"{motion.Id}\"";
-    context.Response.Headers.ETag = etag;
+    var etag = new EntityTagHeaderValue($"\"{motion.Id}\"");
+    context.Response.GetTypedHeaders().ETag = etag;
     context.Response.Headers.CacheControl = "private, no-cache";
-    if (context.Request.Headers.IfNoneMatch.Any(value => value == etag))
+    // If-None-Match uses weak comparison, including tags weakened by compression proxies.
+    // Parse the full header list; malformed validators simply receive the current representation.
+    if (EntityTagHeaderValue.TryParseStrictList([context.Request.Headers.IfNoneMatch.ToString()], out var validators)
+        && (validators.Any(value => value.Equals(EntityTagHeaderValue.Any))
+            ? validators.Count == 1
+            : validators.Any(value => value.Compare(etag, useStrongComparison: false))))
         return Results.StatusCode(StatusCodes.Status304NotModified);
     return Results.Ok(motion);
 }).WithName("GetCatalogMotion");

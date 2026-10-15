@@ -98,17 +98,50 @@ public sealed class EventPipelineTests : IAsyncLifetime
         // Concurrent viewers share the same generated buffer, including its identity.
         var copies = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => client.GetFromJsonAsync<CatalogMotion>("/api/orbital-objects/motion")));
         Assert.All(copies, copy => Assert.Equal(copies[0]!.Id, copy!.Id));
-        using var conditional = new HttpRequestMessage(HttpMethod.Get, "/api/orbital-objects/motion");
-        conditional.Headers.IfNoneMatch.Add(new System.Net.Http.Headers.EntityTagHeaderValue($"\"{copies[0]!.Id}\""));
-        var unchanged = await client.SendAsync(conditional);
-        Assert.Equal(HttpStatusCode.NotModified, unchanged.StatusCode);
+        var etag = motionResponse.Headers.ETag!.ToString();
+        Assert.Equal($"\"{motion.Id}\"", etag);
+        string[][] matchingValidators =
+        [
+            [etag],
+            [$"W/{etag}"], // Cloudflare can weaken the origin's validator when compressing JSON.
+            [$"\"unrelated,tag\", W/{etag}"],
+            ["\"unrelated\"", $"W/{etag}"], // Multiple header lines are also a list.
+            [$" , {etag}, , "],
+            ["*"]
+        ];
+        foreach (var validators in matchingValidators)
+        {
+            using var conditional = new HttpRequestMessage(HttpMethod.Get, "/api/orbital-objects/motion");
+            conditional.Headers.TryAddWithoutValidation("If-None-Match", validators);
+            conditional.Headers.AcceptEncoding.ParseAdd("gzip");
+            using var unchanged = await client.SendAsync(conditional);
+            Assert.Equal(HttpStatusCode.NotModified, unchanged.StatusCode);
+            Assert.Empty(await unchanged.Content.ReadAsByteArrayAsync());
+            Assert.Equal(etag, unchanged.Headers.ETag!.ToString());
+            Assert.True(unchanged.Headers.CacheControl!.Private);
+            Assert.True(unchanged.Headers.CacheControl.NoCache);
+        }
+        string[] nonMatchingOrMalformedValidators =
+        [
+            "\"unrelated\"", "W/\"unrelated\"", "\"old\", W/\"older\"",
+            "not-a-quoted-tag", "W/\"unterminated", $"invalid, {etag}", $"*, {etag}"
+        ];
+        foreach (var validators in nonMatchingOrMalformedValidators)
+        {
+            using var conditional = new HttpRequestMessage(HttpMethod.Get, "/api/orbital-objects/motion");
+            conditional.Headers.TryAddWithoutValidation("If-None-Match", validators);
+            using var full = await client.SendAsync(conditional);
+            Assert.Equal(HttpStatusCode.OK, full.StatusCode);
+            Assert.Equal(motion.Id, (await full.Content.ReadFromJsonAsync<CatalogMotion>())!.Id);
+        }
         clock.Now = clock.Now.AddMinutes(1);
         using var refresh = new HttpRequestMessage(HttpMethod.Get, "/api/orbital-objects/motion");
-        refresh.Headers.IfNoneMatch.Add(conditional.Headers.IfNoneMatch.Single());
+        refresh.Headers.IfNoneMatch.Add(new System.Net.Http.Headers.EntityTagHeaderValue(etag, isWeak: true));
         var refreshed = await client.SendAsync(refresh);
         Assert.Equal(HttpStatusCode.OK, refreshed.StatusCode);
         var next = (await refreshed.Content.ReadFromJsonAsync<CatalogMotion>())!;
         Assert.NotEqual(motion.Id, next.Id);
+        Assert.NotEqual(etag, refreshed.Headers.ETag!.ToString());
         Assert.Equal(motion.StartUtc.AddMinutes(1), next.StartUtc);
         Assert.Equal(motion.Objects[0].States.Skip(12), next.Objects[0].States.Take(18));
         Assert.Equal(0, await connection.ExecuteScalarAsync<int>("SELECT count(*) FROM trajectory_predictions"));

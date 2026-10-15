@@ -50,7 +50,38 @@ describe("motion API contract", () => {
     ])
       expect(() => parseCatalogMotion(bad)).toThrow();
   });
-  it("reuses a 304 response without downloading or replacing the current buffer", async () => {
+  it.each(['"buffer"', 'W/"buffer"'])(
+    "round-trips ETag %s and reuses the exact buffer for an empty 304 response",
+    async (etag) => {
+      const fetch = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify(payload), {
+            headers: { ETag: etag },
+          }),
+        )
+        .mockResolvedValueOnce(new Response(null, { status: 304 }));
+      vi.stubGlobal("fetch", fetch);
+      const load = createMotionLoader(),
+        signal = new AbortController().signal;
+      const initial = await load(signal);
+      expect(await load(signal)).toBe(initial);
+      expect(fetch.mock.calls[0][1].headers["If-None-Match"]).toBeUndefined();
+      expect(fetch.mock.calls[1][1].headers["If-None-Match"]).toBe(etag);
+    },
+  );
+  it("replaces the cached buffer and ETag when the server returns changed data", async () => {
+    const nextPayload = {
+      ...payload,
+      id: "next-buffer",
+      objects: [
+        {
+          ...payload.objects[0],
+          orbitVersion: 4,
+          states: payload.objects[0].states.map((value) => value + 10),
+        },
+      ],
+    };
     const fetch = vi
       .fn()
       .mockResolvedValueOnce(
@@ -58,13 +89,26 @@ describe("motion API contract", () => {
           headers: { ETag: '"buffer"' },
         }),
       )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(nextPayload), {
+          headers: { ETag: 'W/"next-buffer"' },
+        }),
+      )
       .mockResolvedValueOnce(new Response(null, { status: 304 }));
     vi.stubGlobal("fetch", fetch);
     const load = createMotionLoader(),
       signal = new AbortController().signal;
     const initial = await load(signal);
-    expect(await load(signal)).toBe(initial);
+    const updated = await load(signal);
+    expect(updated).not.toBe(initial);
+    expect(updated.id).toBe("next-buffer");
+    expect(updated.objects[0].orbitVersion).toBe(4);
+    expect(updated.objects[0].states[0]).toBe(10);
+    expect(await load(signal)).toBe(updated);
     expect(fetch.mock.calls[1][1].headers["If-None-Match"]).toBe('"buffer"');
+    expect(fetch.mock.calls[2][1].headers["If-None-Match"]).toBe(
+      'W/"next-buffer"',
+    );
   });
   it("keeps a good conditional cache after a malformed refresh", async () => {
     vi.stubGlobal(
