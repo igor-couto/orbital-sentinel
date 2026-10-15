@@ -371,27 +371,58 @@ public sealed class ConjunctionRepository(NpgsqlDataSource dataSource, ILogger<C
         ValidateSource(query.Source);
         if (query.FromUtc > query.ToUtc || query.MaxMissDistanceMeters is { } distance && (!double.IsFinite(distance) || distance < 0))
             throw new ArgumentException("Invalid TCA range or maximum distance.", nameof(query));
-        const string filter = """
-            FROM conjunctions c JOIN conjunction_assessments a ON a.conjunction_id=c.id
-            JOIN prediction_runs r ON r.id=a.prediction_run_id
-            WHERE (@source IS NULL OR c.source=@source)
-                AND (@objectId IS NULL OR c.primary_object_id=@objectId OR c.secondary_object_id=@objectId)
-                AND (@runId IS NULL OR a.prediction_run_id=@runId)
-                AND (@fromUtc IS NULL OR a.tca_utc>=@fromUtc) AND (@toUtc IS NULL OR a.tca_utc<=@toUtc)
-                AND (@maxDistance IS NULL OR a.miss_distance_meters<=@maxDistance)
-                AND (@runId IS NOT NULL OR (
-                    (@latestRunOnly AND r.id=(SELECT latest.id FROM prediction_runs latest
-                        WHERE latest.scope_key=c.scope_key AND latest.status='Completed' ORDER BY latest.sequence DESC LIMIT 1))
-                    OR (NOT @latestRunOnly AND a.id=c.latest_assessment_id)))
-            """;
+        // Select the read mode before querying. A correlated latest-run lookup over
+        // all historical assessments made even pageSize=1 require a full history scan.
+        var prefix = "";
+        var predicates = new List<string>();
+        string from;
+        if (query.PredictionRunId is not null)
+        {
+            from = "FROM conjunction_assessments a JOIN conjunctions c ON c.id=a.conjunction_id";
+            predicates.Add("a.prediction_run_id=@runId");
+        }
+        else if (query.LatestRunOnly)
+        {
+            // Materialize one completed run per scope, including runs with no
+            // encounters. Start from those IDs using the existing run/TCA index.
+            // Both statements use the same repeatable-read snapshot below.
+            prefix = """
+                WITH latest_runs AS MATERIALIZED (
+                    SELECT DISTINCT ON (scope_key) id,scope_key FROM prediction_runs
+                    WHERE status='Completed'
+                """ + (query.Source is null ? "" : " AND source=@source") + """
+
+                    ORDER BY scope_key,sequence DESC
+                )
+
+                """;
+            from = """
+                FROM latest_runs r JOIN conjunction_assessments a ON a.prediction_run_id=r.id
+                JOIN conjunctions c ON c.id=a.conjunction_id AND c.scope_key=r.scope_key
+                """;
+        }
+        else
+        {
+            from = """
+                FROM conjunctions c JOIN conjunction_assessments a
+                    ON a.id=c.latest_assessment_id AND a.conjunction_id=c.id
+                """;
+        }
+        // Only SQL fragments defined here are composed; all request values stay parameters.
+        if (query.Source is not null) predicates.Add("c.source=@source");
+        if (query.ObjectId is not null) predicates.Add("(c.primary_object_id=@objectId OR c.secondary_object_id=@objectId)");
+        if (query.FromUtc is not null) predicates.Add("a.tca_utc>=@fromUtc");
+        if (query.ToUtc is not null) predicates.Add("a.tca_utc<=@toUtc");
+        if (query.MaxMissDistanceMeters is not null) predicates.Add("a.miss_distance_meters<=@maxDistance");
+        var filter = from + (predicates.Count == 0 ? "" : " WHERE " + string.Join(" AND ", predicates));
         var parameters = new { source = query.Source, objectId = query.ObjectId, runId = query.PredictionRunId,
             fromUtc = query.FromUtc?.ToUniversalTime(), toUtc = query.ToUtc?.ToUniversalTime(), maxDistance = query.MaxMissDistanceMeters,
-            latestRunOnly = query.LatestRunOnly, pageSize = query.PageSize, offset = (query.Page - 1) * query.PageSize };
+            pageSize = query.PageSize, offset = (query.Page - 1) * query.PageSize };
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, cancellationToken);
-        var count = await connection.ExecuteScalarAsync<long>(new CommandDefinition("SELECT count(*) " + filter,
+        var count = await connection.ExecuteScalarAsync<long>(new CommandDefinition(prefix + "SELECT count(*) " + filter,
             parameters, transaction, cancellationToken: cancellationToken));
-        var rows = await connection.QueryAsync<SummaryRow>(new CommandDefinition($"SELECT {SummaryColumns} " + filter +
+        var rows = await connection.QueryAsync<SummaryRow>(new CommandDefinition(prefix + $"SELECT {SummaryColumns} " + filter +
             " ORDER BY a.tca_utc,c.id LIMIT @pageSize OFFSET @offset;", parameters, transaction, cancellationToken: cancellationToken));
         await transaction.CommitAsync(cancellationToken);
         return new Page<ConjunctionSummary>(rows.Select(x => x.ToSummary()).ToArray(), query.Page, query.PageSize, count);

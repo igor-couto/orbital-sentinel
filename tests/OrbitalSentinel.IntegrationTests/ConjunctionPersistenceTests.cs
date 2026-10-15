@@ -305,6 +305,116 @@ public sealed class ConjunctionPersistenceTests(PostgresFixture fixture) : IAsyn
     }
 
     [Fact]
+    public async Task Latest_query_selects_completed_runs_per_scope_and_keeps_other_scopes_when_one_finishes_empty()
+    {
+        Assert.Empty((await Repository.ListAsync(new ConjunctionQuery(Source: null))).Items);
+        var catalog = new CatalogRepository(fixture.DataSource);
+        await catalog.UpsertAsync(Import(PrimaryId, 1));
+        await catalog.UpsertAsync(Import(SecondaryId, 2));
+        var real = (await Repository.CreateRealRunAsync(Epoch, TimeSpan.FromHours(24),
+            TimeSpan.FromSeconds(60), new ConjunctionSettings(), "real"))!;
+        await Repository.TryEnqueueScanAsync(await CompletedEvent(real.Id));
+        var realLease = (await Repository.ClaimAsync(TimeSpan.FromMinutes(1)))!;
+        Assert.True(await Repository.CompleteScanAsync(realLease, Result(Encounter(5))));
+
+        var first = await CreateAndClaim("first-scenario-old");
+        Assert.True(await Repository.CompleteScanAsync(first, Result(Encounter(10))));
+        var latest = await CreateAndClaim("first-scenario-latest");
+        Assert.True(await Repository.CompleteScanAsync(latest, Result(Encounter(11))));
+        var emptyScope = Guid.NewGuid();
+        var second = await CreateAndClaim("second-scenario-old", Context() with { ScenarioId = emptyScope });
+        Assert.True(await Repository.CompleteScanAsync(second, Result(Encounter(30))));
+        var empty = await CreateAndClaim("second-scenario-empty", Context() with { ScenarioId = emptyScope });
+        Assert.True(await Repository.CompleteScanAsync(empty, Result()));
+        var third = await CreateAndClaim("third-scenario", Context() with { ScenarioId = Guid.NewGuid() });
+        Assert.True(await Repository.CompleteScanAsync(third, Result(Encounter(40))));
+
+        var failed = await Create("first-scenario-failed");
+        await Sql("UPDATE prediction_runs SET status='Failed',last_error='Test failure' WHERE id=@id;", new { id = failed.Id });
+        await Create("first-scenario-pending");
+        await Repository.CreateRealRunAsync(Epoch.AddHours(1), TimeSpan.FromHours(24),
+            TimeSpan.FromSeconds(60), new ConjunctionSettings(), "real-pending");
+
+        var all = await Repository.ListAsync(new ConjunctionQuery(Source: null));
+        Assert.Equal(3, all.TotalCount);
+        Assert.Equal(new[] { real.Id, latest.Run.Id, third.Run.Id },
+            all.Items.Select(x => x.LatestAssessment.PredictionRunId));
+        Assert.DoesNotContain(all.Items, x => x.ScenarioId == emptyScope);
+        var realOnly = await Repository.ListAsync(new ConjunctionQuery("Real"));
+        Assert.Equal(1, realOnly.TotalCount);
+        Assert.Equal(real.Id, Assert.Single(realOnly.Items).LatestAssessment.PredictionRunId);
+        var simulations = await Repository.ListAsync(new ConjunctionQuery("Simulation"));
+        Assert.Equal(2, simulations.TotalCount);
+        Assert.Equal(new[] { latest.Run.Id, third.Run.Id },
+            simulations.Items.Select(x => x.LatestAssessment.PredictionRunId));
+    }
+
+    [Fact]
+    public async Task Explicit_run_returns_its_assessments_while_all_encounters_returns_only_latest_assessments()
+    {
+        var first = await CreateAndClaim("historical");
+        Assert.True(await Repository.CompleteScanAsync(first, Result(Encounter(10, 100), Encounter(30, 200))));
+        var second = await CreateAndClaim("current");
+        Assert.True(await Repository.CompleteScanAsync(second, Result(Encounter(11, 150), Encounter(60, 300))));
+
+        var latest = await Repository.ListAsync(new ConjunctionQuery("Simulation"));
+        Assert.Equal(2, latest.TotalCount);
+        Assert.All(latest.Items, x => Assert.Equal(second.Run.Id, x.LatestAssessment.PredictionRunId));
+        var allEncounters = await Repository.ListAsync(new ConjunctionQuery(Source: null, LatestRunOnly: false));
+        Assert.Equal(3, allEncounters.TotalCount);
+        Assert.Equal(new[] { Epoch.AddMinutes(11), Epoch.AddMinutes(30), Epoch.AddMinutes(60) },
+            allEncounters.Items.Select(x => x.LatestAssessment.TimeOfClosestApproachUtc));
+        Assert.Equal(new[] { second.Run.Id, first.Run.Id, second.Run.Id },
+            allEncounters.Items.Select(x => x.LatestAssessment.PredictionRunId));
+        Assert.Equal(3, allEncounters.Items.Select(x => x.Id).Distinct().Count());
+
+        foreach (var latestRunOnly in new[] { true, false })
+        {
+            var historical = await Repository.ListAsync(new ConjunctionQuery(Source: null,
+                PredictionRunId: first.Run.Id, LatestRunOnly: latestRunOnly));
+            Assert.Equal(2, historical.TotalCount);
+            Assert.Equal(new[] { Epoch.AddMinutes(10), Epoch.AddMinutes(30) },
+                historical.Items.Select(x => x.LatestAssessment.TimeOfClosestApproachUtc));
+            Assert.All(historical.Items, x => Assert.Equal(first.Run.Id, x.LatestAssessment.PredictionRunId));
+        }
+        Assert.Empty((await Repository.ListAsync(new ConjunctionQuery("Real", PredictionRunId: first.Run.Id))).Items);
+        Assert.Empty((await Repository.ListAsync(new ConjunctionQuery(Source: null, PredictionRunId: Guid.NewGuid()))).Items);
+    }
+
+    [Fact]
+    public async Task Filtered_pages_use_inclusive_bounds_and_keep_total_count_when_requested_page_is_empty()
+    {
+        var lease = await CreateAndClaim("filters");
+        Assert.True(await Repository.CompleteScanAsync(lease,
+            Result(Encounter(10, 100), Encounter(30, 200), Encounter(50, 300), Encounter(70, 400))));
+        var query = new ConjunctionQuery("Simulation", SecondaryId, FromUtc: Epoch.AddMinutes(30),
+            ToUtc: Epoch.AddMinutes(50), MaxMissDistanceMeters: 300, PageSize: 1);
+        var first = await Repository.ListAsync(query);
+        Assert.Equal(2, first.TotalCount);
+        Assert.Equal(Epoch.AddMinutes(30), Assert.Single(first.Items).LatestAssessment.TimeOfClosestApproachUtc);
+        var second = await Repository.ListAsync(query with { Page = 2 });
+        Assert.Equal(2, second.TotalCount);
+        Assert.Equal(Epoch.AddMinutes(50), Assert.Single(second.Items).LatestAssessment.TimeOfClosestApproachUtc);
+        var beyondEnd = await Repository.ListAsync(query with { Page = 3 });
+        Assert.Equal(2, beyondEnd.TotalCount);
+        Assert.Empty(beyondEnd.Items);
+        var distanceLimited = await Repository.ListAsync(query with { MaxMissDistanceMeters = 200 });
+        Assert.Equal(1, distanceLimited.TotalCount);
+        Assert.Equal(200, Assert.Single(distanceLimited.Items).LatestAssessment.MissDistanceMeters);
+        var noMatches = await Repository.ListAsync(query with { ObjectId = Guid.NewGuid() });
+        Assert.Equal(0, noMatches.TotalCount);
+        Assert.Empty(noMatches.Items);
+        var fromOnly = await Repository.ListAsync(new ConjunctionQuery("Simulation", FromUtc: Epoch.AddMinutes(50)));
+        Assert.Equal(2, fromOnly.TotalCount);
+        Assert.Equal(new[] { Epoch.AddMinutes(50), Epoch.AddMinutes(70) },
+            fromOnly.Items.Select(x => x.LatestAssessment.TimeOfClosestApproachUtc));
+        var toOnly = await Repository.ListAsync(new ConjunctionQuery("Simulation", ToUtc: Epoch.AddMinutes(30)));
+        Assert.Equal(2, toOnly.TotalCount);
+        Assert.Equal(new[] { Epoch.AddMinutes(10), Epoch.AddMinutes(30) },
+            toOnly.Items.Select(x => x.LatestAssessment.TimeOfClosestApproachUtc));
+    }
+
+    [Fact]
     public async Task Duplicate_encounter_results_roll_back_instead_of_creating_two_logical_identities()
     {
         var lease = await CreateAndClaim("duplicates");
@@ -395,9 +505,9 @@ public sealed class ConjunctionPersistenceTests(PostgresFixture fixture) : IAsyn
     }
 
     private Task<PredictionRunRecord> Create(string key) => Repository.CreateSimulationRunAsync(Context(), key);
-    private async Task<ConjunctionScanLease> CreateAndClaim(string key)
+    private async Task<ConjunctionScanLease> CreateAndClaim(string key, PredictionRunContext? context = null)
     {
-        var run = await Create(key);
+        var run = await Repository.CreateSimulationRunAsync(context ?? Context(), key);
         await Repository.TryEnqueueScanAsync(await CompletedEvent(run.Id));
         return (await Repository.ClaimAsync(TimeSpan.FromMinutes(1)))!;
     }
