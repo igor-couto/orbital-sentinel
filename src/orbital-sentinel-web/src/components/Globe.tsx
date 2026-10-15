@@ -9,13 +9,7 @@ import { createLivePolyline } from "./livePolyline";
 import { predictionPath } from "../domain/predictionPath";
 import type { CatalogMotion } from "../domain/motion";
 import { CatalogMotionLayer } from "./catalogMotionLayer";
-
-declare global {
-  interface Window {
-    Cesium?: typeof Cesium;
-    CESIUM_BASE_URL: string;
-  }
-}
+import { loadCesium } from "./cesiumLoader";
 
 interface Props {
   objects: CatalogEntry[];
@@ -73,182 +67,214 @@ export function Globe({
     null,
   );
   const [ready, setReady] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{
+    message: string;
+    retryable: boolean;
+  } | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
   const selectedId = selected?.object.id;
 
   useEffect(() => {
-    const C = window.Cesium;
-    if (!C || !container.current) {
-      setError(
-        "The globe engine could not load. Refresh the page to try again.",
-      );
-      return;
-    }
-    window.CESIUM_BASE_URL = "/cesium/";
     let disposed = false;
     let viewer: Cesium.Viewer | null = null;
     let animationFrame = 0;
-    const defaultCredit = C.CreditDisplay.cesiumCredit;
-    try {
-      // Explicitly disable ion-backed default imagery and geocoding. All globe
-      // resources and Natural Earth imagery are served from this application.
-      // No ion services are used; omit its default logo while leaving provider credits enabled.
-      C.CreditDisplay.cesiumCredit = new C.Credit("");
-      viewer = new C.Viewer(container.current, {
-        baseLayer: false,
-        baseLayerPicker: false,
-        geocoder: false,
-        animation: false,
-        timeline: false,
-        homeButton: false,
-        fullscreenButton: false,
-        navigationHelpButton: false,
-        sceneModePicker: false,
-        infoBox: false,
-        selectionIndicator: false,
-        shouldAnimate: false,
-        useDefaultRenderLoop: false,
-        requestRenderMode: true,
-        maximumRenderTimeChange: Infinity,
-        skyBox: false,
-        skyAtmosphere: new C.SkyAtmosphere(),
-        contextOptions: { webgl: { alpha: true } },
-      });
-      const activeViewer = viewer;
-      viewerRef.current = viewer;
-      predictionLine.current = createLivePolyline(C);
-      catalogLayer.current = new CatalogMotionLayer(C, viewer.scene);
-      viewer.scene.backgroundColor = C.Color.fromCssColorString("#080d16");
-      viewer.scene.globe.baseColor = C.Color.fromCssColorString("#152b3c");
-      viewer.scene.globe.enableLighting = false;
-      viewer.scene.globe.showGroundAtmosphere = true;
-      viewer.scene.screenSpaceCameraController.minimumZoomDistance = 4_000_000;
-      viewer.scene.screenSpaceCameraController.maximumZoomDistance = 150_000_000;
-      viewer.resolutionScale = Math.min(window.devicePixelRatio, 1.5);
-      viewer.camera.setView({
-        destination: C.Cartesian3.fromDegrees(18, 20, 16_000_000),
-      });
-      viewer.screenSpaceEventHandler.setInputAction(
-        (event: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
-          const picked: unknown = activeViewer.scene.pick(event.position);
-          if (
-            picked &&
-            typeof picked === "object" &&
-            "id" in picked &&
-            picked.id instanceof C.Entity
-          ) {
-            const id = picked.id.id;
-            if (id.startsWith("object:")) onSelectRef.current(id.slice(7));
-          } else if (
-            picked &&
-            typeof picked === "object" &&
-            "orbitalObjectId" in picked &&
-            typeof picked.orbitalObjectId === "string"
-          ) {
-            onSelectRef.current(picked.orbitalObjectId);
-          }
-        },
-        C.ScreenSpaceEventType.LEFT_CLICK,
-      );
-      let lastFrame = 0;
-      let measuredFrames = 0,
-        measuredTime = 0,
-        previousFrame = 0;
-      const animate = (wallTime: number) => {
-        if (disposed || activeViewer.isDestroyed()) return;
-        animationFrame = requestAnimationFrame(animate);
-        if (document.hidden || wallTime - lastFrame < 1000 / 30) return;
-        lastFrame = wallTime - ((wallTime - lastFrame) % (1000 / 30));
-        const state = frameState.current;
-        const live = !state.preview && !state.encounter;
-        // Preserve the full catalog on slower GPUs. Reduce only canvas resolution,
-        // not sample density, marker count, or the accuracy of the displayed clock.
-        const elapsed = wallTime - previousFrame;
-        previousFrame = wallTime;
-        if (live && elapsed > 0 && elapsed < 250) {
-          measuredFrames++;
-          measuredTime += elapsed;
-          if (measuredTime >= 2000) {
-            if (
-              measuredTime / measuredFrames > 42 &&
-              activeViewer.resolutionScale > 0.65
-            )
-              activeViewer.resolutionScale = Math.max(
-                0.65,
-                activeViewer.resolutionScale * 0.85,
-              );
-            measuredFrames = 0;
-            measuredTime = 0;
-          }
-        }
-        const time = live ? Date.now() : state.timestamp;
-        activeViewer.clock.currentTime = C.JulianDate.fromDate(new Date(time));
-        catalogLayer.current?.update(time, !live);
-        const path = predictionLine.current;
-        if (path && !state.encounter) {
-          const vertices =
-            state.selected && state.trajectory && state.orbitalPeriodMinutes
-              ? predictionPath(
-                  state.trajectory,
-                  time,
-                  state.orbitalPeriodMinutes,
-                  state.pathView,
-                ).map((p) => new C.Cartesian3(p.x, p.y, p.z))
-              : [];
-          // The line and selected marker use exactly the same displayed position.
-          const marker =
-            state.selected &&
-            activeViewer.entities
-              .getById(`object:${state.selected.object.id}`)
-              ?.position?.getValue(activeViewer.clock.currentTime);
-          if (vertices.length && marker) vertices[0] = marker;
-          path.setPositions(vertices);
-          path.entity.show = state.showTrajectory && vertices.length > 1;
-        }
-        if (live) activeViewer.scene.requestRender();
-        activeViewer.resize();
-        activeViewer.render();
-      };
-      animationFrame = requestAnimationFrame(animate);
-      void C.TileMapServiceImageryProvider.fromUrl(
-        "/cesium/Assets/Textures/NaturalEarthII",
-        {
-          maximumLevel: 2,
-        },
-      )
-        .then((provider) => {
-          if (disposed || activeViewer.isDestroyed()) return;
-          const layer = activeViewer.imageryLayers.addImageryProvider(provider);
-          layer.brightness = 0.68;
-          layer.saturation = 0.65;
-          layer.contrast = 1.12;
-          activeViewer.scene.requestRender();
-        })
-        .catch(() => {
-          if (!disposed)
-            setError(
-              "Earth imagery is unavailable. Orbital positions remain visible on the globe.",
-            );
-        });
-      setReady(true);
-    } catch {
-      setError(
-        "The 3D globe needs a browser with WebGL support. The object catalog is still available.",
-      );
-    }
-    return () => {
-      disposed = true;
+    let restoreCredit = () => {};
+    setReady(false);
+    setError(null);
+
+    function releaseViewer() {
       cancelAnimationFrame(animationFrame);
-      setReady(false);
       viewerRef.current = null;
       predictionLine.current = null;
       catalogLayer.current = null;
       if (viewer && !viewer.isDestroyed()) viewer.destroy();
-      C.CreditDisplay.cesiumCredit = defaultCredit;
+      restoreCredit();
+      restoreCredit = () => {};
+    }
+
+    async function initialize() {
+      let C: typeof Cesium;
+      try {
+        C = await loadCesium();
+      } catch {
+        if (!disposed)
+          setError({
+            message:
+              "The 3D view could not load. The object catalog is still available.",
+            retryable: true,
+          });
+        return;
+      }
+      if (disposed || !container.current) return;
+      const defaultCredit = C.CreditDisplay.cesiumCredit;
+      restoreCredit = () => {
+        C.CreditDisplay.cesiumCredit = defaultCredit;
+      };
+      try {
+        // Explicitly disable ion-backed default imagery and geocoding. All globe
+        // resources and Natural Earth imagery are served from this application.
+        // No ion services are used; omit its default logo while leaving provider credits enabled.
+        C.CreditDisplay.cesiumCredit = new C.Credit("");
+        viewer = new C.Viewer(container.current, {
+          baseLayer: false,
+          baseLayerPicker: false,
+          geocoder: false,
+          animation: false,
+          timeline: false,
+          homeButton: false,
+          fullscreenButton: false,
+          navigationHelpButton: false,
+          sceneModePicker: false,
+          infoBox: false,
+          selectionIndicator: false,
+          shouldAnimate: false,
+          useDefaultRenderLoop: false,
+          requestRenderMode: true,
+          maximumRenderTimeChange: Infinity,
+          skyBox: false,
+          skyAtmosphere: new C.SkyAtmosphere(),
+          contextOptions: { webgl: { alpha: true } },
+        });
+        const activeViewer = viewer;
+        viewerRef.current = viewer;
+        predictionLine.current = createLivePolyline(C);
+        catalogLayer.current = new CatalogMotionLayer(C, viewer.scene);
+        viewer.scene.backgroundColor = C.Color.fromCssColorString("#080d16");
+        viewer.scene.globe.baseColor = C.Color.fromCssColorString("#152b3c");
+        viewer.scene.globe.enableLighting = false;
+        viewer.scene.globe.showGroundAtmosphere = true;
+        viewer.scene.screenSpaceCameraController.minimumZoomDistance = 4_000_000;
+        viewer.scene.screenSpaceCameraController.maximumZoomDistance = 150_000_000;
+        viewer.resolutionScale = Math.min(window.devicePixelRatio, 1.5);
+        viewer.camera.setView({
+          destination: C.Cartesian3.fromDegrees(18, 20, 16_000_000),
+        });
+        viewer.screenSpaceEventHandler.setInputAction(
+          (event: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
+            const picked: unknown = activeViewer.scene.pick(event.position);
+            if (
+              picked &&
+              typeof picked === "object" &&
+              "id" in picked &&
+              picked.id instanceof C.Entity
+            ) {
+              const id = picked.id.id;
+              if (id.startsWith("object:")) onSelectRef.current(id.slice(7));
+            } else if (
+              picked &&
+              typeof picked === "object" &&
+              "orbitalObjectId" in picked &&
+              typeof picked.orbitalObjectId === "string"
+            ) {
+              onSelectRef.current(picked.orbitalObjectId);
+            }
+          },
+          C.ScreenSpaceEventType.LEFT_CLICK,
+        );
+        let lastFrame = 0;
+        let measuredFrames = 0,
+          measuredTime = 0,
+          previousFrame = 0;
+        const animate = (wallTime: number) => {
+          if (disposed || activeViewer.isDestroyed()) return;
+          animationFrame = requestAnimationFrame(animate);
+          if (document.hidden || wallTime - lastFrame < 1000 / 30) return;
+          lastFrame = wallTime - ((wallTime - lastFrame) % (1000 / 30));
+          const state = frameState.current;
+          const live = !state.preview && !state.encounter;
+          // Preserve the full catalog on slower GPUs. Reduce only canvas resolution,
+          // not sample density, marker count, or the accuracy of the displayed clock.
+          const elapsed = wallTime - previousFrame;
+          previousFrame = wallTime;
+          if (live && elapsed > 0 && elapsed < 250) {
+            measuredFrames++;
+            measuredTime += elapsed;
+            if (measuredTime >= 2000) {
+              if (
+                measuredTime / measuredFrames > 42 &&
+                activeViewer.resolutionScale > 0.65
+              )
+                activeViewer.resolutionScale = Math.max(
+                  0.65,
+                  activeViewer.resolutionScale * 0.85,
+                );
+              measuredFrames = 0;
+              measuredTime = 0;
+            }
+          }
+          const time = live ? Date.now() : state.timestamp;
+          activeViewer.clock.currentTime = C.JulianDate.fromDate(
+            new Date(time),
+          );
+          catalogLayer.current?.update(time, !live);
+          const path = predictionLine.current;
+          if (path && !state.encounter) {
+            const vertices =
+              state.selected && state.trajectory && state.orbitalPeriodMinutes
+                ? predictionPath(
+                    state.trajectory,
+                    time,
+                    state.orbitalPeriodMinutes,
+                    state.pathView,
+                  ).map((p) => new C.Cartesian3(p.x, p.y, p.z))
+                : [];
+            // The line and selected marker use exactly the same displayed position.
+            const marker =
+              state.selected &&
+              activeViewer.entities
+                .getById(`object:${state.selected.object.id}`)
+                ?.position?.getValue(activeViewer.clock.currentTime);
+            if (vertices.length && marker) vertices[0] = marker;
+            path.setPositions(vertices);
+            path.entity.show = state.showTrajectory && vertices.length > 1;
+          }
+          if (live) activeViewer.scene.requestRender();
+          activeViewer.resize();
+          activeViewer.render();
+        };
+        animationFrame = requestAnimationFrame(animate);
+        void C.TileMapServiceImageryProvider.fromUrl(
+          "/cesium/Assets/Textures/NaturalEarthII",
+          {
+            maximumLevel: 2,
+          },
+        )
+          .then((provider) => {
+            if (disposed || activeViewer.isDestroyed()) return;
+            const layer =
+              activeViewer.imageryLayers.addImageryProvider(provider);
+            layer.brightness = 0.68;
+            layer.saturation = 0.65;
+            layer.contrast = 1.12;
+            activeViewer.scene.requestRender();
+          })
+          .catch(() => {
+            if (!disposed)
+              setError({
+                message:
+                  "Earth imagery is unavailable. Orbital positions remain visible on the globe.",
+                retryable: false,
+              });
+          });
+        setReady(true);
+      } catch {
+        releaseViewer();
+        setError({
+          message:
+            "The 3D globe needs a browser with WebGL support. The object catalog is still available.",
+          retryable: true,
+        });
+      }
+    }
+    void initialize();
+    return () => {
+      disposed = true;
+      setReady(false);
+      releaseViewer();
     };
-  }, []);
+  }, [loadAttempt]);
 
   useEffect(() => {
     if (!ready) return;
@@ -513,11 +539,27 @@ export function Globe({
         ref={container}
         className="globe-canvas"
         aria-label="Interactive Earth showing backend-predicted orbital positions"
+        aria-busy={!ready && !error}
       />
+      {!ready && !error && (
+        <div role="status" className="globe-loading">
+          Loading 3D view…
+        </div>
+      )}
       {error && (
         <div role="status" className="globe-warning">
           <Icon name="info" />
-          {error}
+          <div className="globe-warning-content">
+            <span>{error.message}</span>
+            {error.retryable && (
+              <button
+                className="globe-retry"
+                onClick={() => setLoadAttempt((attempt) => attempt + 1)}
+              >
+                Retry 3D view
+              </button>
+            )}
+          </div>
         </div>
       )}
       <div className="globe-controls">
@@ -525,6 +567,7 @@ export function Globe({
           className="icon-button"
           title="Reset Earth view"
           aria-label="Reset Earth view"
+          disabled={!ready}
           onClick={resetCamera}
         >
           <Icon name="globe" />

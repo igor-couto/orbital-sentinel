@@ -697,13 +697,18 @@ main {
 }
 .globe-panel {
   position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto auto;
   background: #080d16;
   min-height: 600px;
   isolation: isolate;
 }
 .globe-canvas {
-  position: absolute;
-  inset: 20px 0 190px;
+  position: relative;
+  grid-row: 1;
+  min-height: 0;
+  margin-top: 20px;
 }
 .cesium-viewer,
 .cesium-viewer-cesiumWidgetContainer,
@@ -809,9 +814,8 @@ main {
   background: #111c28d9;
 }
 .globe-legend {
-  position: absolute;
-  left: 19px;
-  bottom: 170px;
+  grid-row: 2;
+  margin: 10px 19px 18px;
   display: flex;
   gap: 13px;
   font-size: 8px;
@@ -845,23 +849,9 @@ main {
 .legend-dot.encounter {
   background: #fff;
 }
-.view-summary {
-  position: absolute;
-  bottom: 146px;
-  left: 20px;
-  right: 20px;
-  display: flex;
-  justify-content: space-between;
-  font-size: 8px;
-  color: #63788a;
-  gap: 10px;
-  pointer-events: none;
-}
 .timeline {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  position: relative;
+  grid-row: 3;
   padding: 14px 18px 15px;
   background: #0c151feb;
   border-top: 1px solid #21303e;
@@ -952,6 +942,32 @@ main {
 }
 .globe-warning svg {
   flex-shrink: 0;
+}
+.globe-loading {
+  position: absolute;
+  top: 40%;
+  left: 20px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #9ba9b8;
+  font-size: 12px;
+  pointer-events: none;
+}
+.globe-warning-content {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.globe-retry {
+  align-self: flex-start;
+  padding: 6px 10px;
+  border: 1px solid #665233;
+  border-radius: 4px;
+  background: #372e1f;
 }
 .details-panel {
   overflow-y: auto;
@@ -1744,10 +1760,6 @@ main {
     padding: 18px;
   }
   .globe-legend {
-    font-size: 8px;
-    gap: 12px;
-  }
-  .view-summary {
     font-size: 8px;
     gap: 12px;
   }

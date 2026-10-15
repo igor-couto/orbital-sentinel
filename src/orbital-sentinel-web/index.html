@@ -10,8 +10,12 @@
     />
     <title>Orbital Sentinel · Space traffic</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/cesium/Widgets/widgets.css" />
-    <script src="/cesium/Cesium.js"></script>
+    <link
+      rel="preload"
+      href="/cesium/Cesium.js"
+      as="script"
+      fetchpriority="low"
+    />
   </head>
   <body>
     <div id="root"></div>

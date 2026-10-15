@@ -121,9 +121,6 @@ export function App() {
     trajectoryStart,
     Math.min(trajectoryEnd, timestamp),
   );
-  const shownCount =
-    previewTime === null ? visibleCount : currentPosition ? 1 : 0;
-
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -465,21 +462,6 @@ export function App() {
                   )}
                 </>
               )}
-            </div>
-            <div className="view-summary">
-              <span>
-                {encounter ? (
-                  "2 objects · pinned assessment"
-                ) : (
-                  <>
-                    {shownCount}{" "}
-                    {previewTime !== null
-                      ? "selected object"
-                      : "position samples"}
-                  </>
-                )}
-              </span>
-              <span>Drag to rotate · scroll to zoom</span>
             </div>
             <div className="timeline">
               <div className="timeline-heading">
