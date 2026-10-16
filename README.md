@@ -15,25 +15,15 @@ This is an engineering demonstrator, **not a system for operational spacecraft d
 
 ## Features
 
-- OMM-compatible JSON from all public groups on CelesTrak's current-data page, discovered automatically and deduplicated by NORAD ID, with an optional object limit.
-- Internal UUID identities; optional NORAD IDs remain external identifiers. Orbital elements are immutable revisions, detected using a canonical fingerprint of every dynamical field.
-- Transactional state + outbox writes, concurrent publication leases, per-object ordering, finite publication attempts, durable quarantine, and atomic consumer inbox + trajectory + outgoing-event writes.
-- SGP4 visualization: shared current positions and on-demand 24-hour trajectories at 60-second intervals, with direct position/velocity propagation. An optional Kafka-driven precomputation mode remains available for smaller catalogs.
-- A bounded in-memory cache of selected paths; regeneration does not erase orbital-element history.
-- REST catalog bootstrap, search/pagination, object details, current sample positions, trajectory retrieval, ProblemDetails, and OpenAPI.
-- SignalR trajectory-availability notifications, with REST reconciliation when notifications are missed.
-- React/TypeScript/Cesium Earth, selection, predicted path, time preview, element freshness, and honest loading/failure states. Earth imagery and Cesium assets are served locally.
-- Real PostgreSQL/Kafka integration tests, reference-vector tests, source-adapter tests, and CI.
-- Coherent prediction runs with in-memory TEME screening, direct-SGP4 TCA refinement, immutable conjunction assessments, and separate identification/reassessment events.
-- A Conjunctions view with pair trajectories, assessment history, and an isolated deterministic crossing-orbits simulation.
-
-OMM feeds often omit object type. A supplied `OBJECT_TYPE` takes precedence; when it is missing, null, or blank, the importer falls back to clear [CelesTrak naming markers](https://celestrak.org/satcat/satcat-format.php): a terminal `DEB` becomes **Debris**, and `R/B` or a numbered stage such as `R/B(2)` becomes **Rocket Body**. Trailing alternate names and bracketed descriptions do not supply a classification themselves. Conflicting markers, attached objects (`&`), platforms (`PLAT`), and names without a clear category remain **Unclassified**; a name without `DEB` or `R/B` is not assumed to be a payload. Explicit source types, including unknown or unsupported values, are never replaced by a name inference. The frontend also recognizes SATCAT type codes `PAY`, `R/B`, `DEB`, and `UNK`.
-
-Existing records acquire the fallback classification on the next successful scheduled import (every two hours by default), even when their orbital elements have not changed. A group-based selection gives a useful variety but does not guarantee a particular number of each type.
-
-The Object details panel includes NORAD/COSPAR identifiers, country or owner, launch date/site, operational status, type, altitude, speed, approximate perigee/apogee, period, inclination, element epoch/source, and imported catalog groups. A separate worker caches [CelesTrak SATCAT](https://celestrak.org/satcat/satcat-format.php) metadata daily for the configured CelesTrak groups. `SatelliteCatalog:BaseUrl` defaults to the official records endpoint; `SatelliteCatalog:RequestIntervalMinutes` defaults to 1440 and must be at least 120. Durable per-group schedules prevent repeated downloads after restarts; failed downloads retain the cache and do not block orbital ingestion. Definite SATCAT types fill previously unknown catalog classifications consistently across the list, globe, and details. Operator information is shown only for identified constellation groups; absent metadata remains explicitly unavailable.
-
-Altitude is WGS84 geodetic height and speed is the magnitude of the SGP4 TEME velocity, sampled by the backend and interpolated at the displayed time. Speed is not inferred from adjacent positions or presented as ground speed. Approximate mean-orbit apsides use WGS84 constants and the current element revision, rather than mixing in a different catalog's orbit. Existing trajectory caches are refreshed after migration to populate the additional scalar measurements.
+- **Interactive 3D Earth:** Explore satellites, rocket bodies, and debris with smoothly animated positions predicted from CelesTrak orbital data.
+- **Search and filter:** Find objects by name or NORAD ID and filter the catalog by object type.
+- **Detailed object profiles:** Inspect altitude, speed, orbital characteristics, and available launch, ownership, and status information.
+- **24-hour previews:** Move along a timeline to see where a selected object is predicted to be.
+- **Two orbital views:** Switch between an orbit around Earth and a path relative to Earth's rotation.
+- **Close-approach analysis:** Explore predicted encounters, compare both objects' paths, and inspect the closest-approach time, separation, and relative speed.
+- **Assessment history:** See how predictions for the same encounter change as new assessments become available.
+- **Simulated encounters:** Run a predefined crossing-orbits scenario to explore conjunction detection, separate from the real catalog.
+- **Data freshness and coverage:** See the age of orbital data, expired predictions, and notices when screening could not cover every object.
 
 ## Architecture
 
